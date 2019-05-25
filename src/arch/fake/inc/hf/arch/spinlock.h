@@ -36,6 +36,11 @@ static inline void sl_lock(struct spinlock *l)
 	}
 }
 
+static inline bool sl_try_lock(struct spinlock *l)
+{
+	return !atomic_flag_test_and_set_explicit(&l->v, memory_order_acquire);
+}
+
 static inline void sl_unlock(struct spinlock *l)
 {
 	atomic_flag_clear_explicit(&l->v, memory_order_release);

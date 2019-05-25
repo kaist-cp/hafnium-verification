@@ -141,11 +141,11 @@ bool cpu_on(struct cpu *c, ipaddr_t entry, uintreg_t arg)
 	if (!prev) {
 		struct vm *vm = vm_find(HF_PRIMARY_VM_ID);
 		struct vcpu *vcpu = vm_get_vcpu(vm, cpu_index(c));
-		struct vcpu_locked vcpu_locked;
+		struct vcpu_execution_locked vcpu_execution_locked;
 
-		vcpu_locked = vcpu_lock(vcpu);
-		vcpu_on(vcpu_locked, entry, arg);
-		vcpu_unlock(&vcpu_locked);
+		vcpu_execution_locked = vcpu_lock(vcpu);
+		vcpu_on(vcpu_execution_locked, entry, arg);
+		vcpu_unlock(&vcpu_execution_locked);
 	}
 
 	return prev;
