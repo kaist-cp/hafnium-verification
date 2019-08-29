@@ -16,6 +16,7 @@
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
+use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::ptr;
 use core::sync::atomic::{spin_loop_hint, AtomicBool, Ordering};
@@ -86,6 +87,21 @@ impl<T> SpinLock<T> {
         }
     }
 
+    pub fn try_lock<'s>(&'s self) -> Option<SpinLockGuard<'s, T>> {
+        if self.lock.try_lock() {
+            Some(SpinLockGuard {
+                lock: self,
+                _marker: PhantomData,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub unsafe fn unlock_unchecked(&self) {
+        self.lock.unlock();
+    }
+
     pub unsafe fn get_unchecked(&self) -> &T {
         &*self.data.get()
     }
@@ -146,7 +162,9 @@ impl<'s, T> DerefMut for SpinLockGuard<'s, T> {
 
 impl<'s, T> SpinLockGuard<'s, T> {
     pub fn into_raw(self) -> usize {
-        self.lock as *const _ as usize
+        let ret = self.lock as *const _ as usize;
+        mem::forget(self);
+        ret
     }
 
     pub unsafe fn from_raw(data: usize) -> Self {

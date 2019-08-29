@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use core::mem::{self, MaybeUninit};
+use core::mem::{self, ManuallyDrop, MaybeUninit};
 use core::ptr;
 
 use crate::addr::*;
@@ -55,7 +55,7 @@ extern "C" {
     ///
     /// This function must only be called on an arch_regs that is known not be in use
     /// by any other physical CPU.
-    pub fn arch_regs_set_retval(r: *mut ArchRegs, v: uintreg_t);
+    fn arch_regs_set_retval(r: *mut ArchRegs, v: uintreg_t);
 }
 
 const STACK_SIZE: usize = PAGE_SIZE;
@@ -95,6 +95,130 @@ pub struct Interrupts {
     pub enabled_and_pending_count: u32,
 }
 
+impl Interrupts {
+    pub fn id_to_index(intid: intid_t) -> Result<(usize, u32), ()> {
+        if intid >= HF_NUM_INTIDS {
+            return Err(());
+        }
+
+        let intid_index = intid as usize / INTERRUPT_REGISTER_BITS;
+        let intid_mask = 1u32 << (intid % INTERRUPT_REGISTER_BITS as u32);
+
+        Ok((intid_index, intid_mask))
+    }
+
+    /// injects a virtual interrupt of the given ID into the given target vCPU.
+    /// Returns:
+    ///  - None if no further action is needed.
+    ///  - Some(()) if the vcpu had have no pending interrupt before, thus
+    ///    proper scheduling is required.
+    pub fn inject(&mut self, intid: intid_t) -> Result<(), ()> {
+        let (intid_index, intid_mask) = Self::id_to_index(intid)?;
+
+        // Make it pending.
+        let pending = self.pending[intid_index];
+        self.pending[intid_index] |= intid_mask;
+
+        // We only need to change state and (maybe) trigger a virtual IRQ if it
+        // is enabled and was not previously pending. Otherwise we can skip
+        // everything except setting the pending bit.
+        //
+        // If you change this logic make sure to update the need_vm_lock logic
+        // above to match.
+        if self.enabled[intid_index] & !pending & intid_mask == 0 {
+            return Err(());
+        }
+
+        // Increment the count.
+        self.enabled_and_pending_count += 1;
+
+        // Only need to update state if there was not already an
+        // interrupt enabled and pending.
+        if self.enabled_and_pending_count != 1 {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Enables or disables a given interrupt ID for the calling vCPU.
+    pub fn enable(&mut self, intid: intid_t, enable: bool) -> Result<(), ()> {
+        let (intid_index, intid_mask) = Self::id_to_index(intid)?;
+
+        if enable {
+            // If it is pending and was not enabled before, increment the count.
+            if (self.pending[intid_index] & !self.enabled[intid_index] & intid_mask) != 0 {
+                self.enabled_and_pending_count += 1;
+            }
+            self.enabled[intid_index] |= intid_mask;
+        } else {
+            // If it is pending and was enabled before, decrement the count.
+            if (self.pending[intid_index] & self.enabled[intid_index] & intid_mask) != 0 {
+                self.enabled_and_pending_count -= 1;
+            }
+            self.enabled[intid_index] &= !intid_mask;
+        }
+
+        Ok(())
+    }
+
+    /// Returns the ID of the next pending interrupt for the calling vCPU, and
+    /// acknowledges it (i.e. marks it as no longer pending). Returns
+    /// HF_INVALID_INTID if there are no pending interrupts.
+    pub fn get(&mut self) -> intid_t {
+        // Find the first enabled pending interrupt ID, returns it, and
+        // deactive it.
+        for i in 0..(HF_NUM_INTIDS as usize / INTERRUPT_REGISTER_BITS) {
+            let enabled_and_pending = self.enabled[i] & self.pending[i];
+            if enabled_and_pending != 0 {
+                let bit_index = enabled_and_pending.trailing_zeros();
+
+                // Mark it as no longer pending and decrement the count.
+                self.pending[i] &= !(1u32 << bit_index);
+                self.enabled_and_pending_count -= 1;
+                return (i * INTERRUPT_REGISTER_BITS) as u32 + bit_index;
+            }
+        }
+
+        HF_INVALID_INTID
+    }
+}
+
+impl ArchRegs {
+    /// Reset the register values other than the PC and argument which are set
+    /// with `arch_regs_set_pc_arg()`.
+    pub fn reset(&mut self, is_primary: bool, vm: &Vm, vcpu_id: cpu_id_t) {
+        unsafe { arch_regs_reset(self, is_primary, vm.id, vcpu_id, vm.get_ptable_raw()) }
+    }
+
+    /// Updates the register holding the return value of a function.
+    pub fn set_retval(&mut self, v: uintreg_t) {
+        unsafe { arch_regs_set_retval(self, v) }
+    }
+
+    /// Updates the given registers so that when a vcpu runs, it starts off at
+    /// the given address (pc) with the given argument.
+    pub fn set_pc_arg(&mut self, pc: ipaddr_t, arg: uintreg_t) {
+        unsafe { arch_regs_set_pc_arg(self, pc, arg) }
+    }
+
+    pub fn timer_mask(&mut self) {
+        unsafe { arch_timer_mask(self) }
+    }
+
+    pub fn timer_enabled(&self) -> bool {
+        unsafe { arch_timer_enabled(self) }
+    }
+
+    pub fn timer_remaining_ns(&self) -> u64 {
+        unsafe { arch_timer_remaining_ns(self) }
+    }
+
+    pub fn timer_pending(&self) -> bool {
+        unsafe { arch_timer_pending(self) }
+    }
+}
+
 #[repr(C)]
 pub struct VCpuFaultInfo {
     ipaddr: ipaddr_t,
@@ -103,32 +227,79 @@ pub struct VCpuFaultInfo {
     mode: Mode,
 }
 
+pub struct VCpuInner {
+    /// The state is only changed in the context of the vCPU being run. This
+    /// ensures the scheduler can easily keep track of the vCPU state as
+    /// transitions are indicated by the return code from the run call.
+    pub state: VCpuStatus,
+    pub cpu: *mut Cpu,
+    pub regs: ArchRegs,
+}
+
+impl VCpuInner {
+    /// Initialise the registers for the given vCPU and set the state to
+    /// VCpuStatus::Ready. The caller must hold the vCPU execution lock while
+    /// calling this.
+    pub fn on(&mut self, entry: ipaddr_t, arg: uintreg_t) {
+        self.regs.set_pc_arg(entry, arg);
+        self.state = VCpuStatus::Ready;
+    }
+
+    /// Check whether self is an off state, for the purpose of turning vCPUs on
+    /// and off. Note that aborted still counts as on in this context.
+    pub fn is_off(&self) -> bool {
+        // Aborted still counts as ON for the purposes of PSCI, because according to the PSCI
+        // specification (section 5.7.1) a core is only considered to be off if it has been turned
+        // off with a CPU_OFF call or hasn't yet been turned on with a CPU_ON call.
+        self.state == VCpuStatus::Off
+    }
+}
+
 #[repr(C)]
 pub struct VCpu {
-    /// Protects accesses to vCPU's state and architecture registers. If a
-    /// vCPU is running, its execution lock is logically held by the
-    /// running pCPU.
-    pub execution_lock: RawSpinLock,
-
-    /// Protects accesses to vCPU's interrupts.
-    pub interrupts_lock: RawSpinLock,
-
-    /// The state is only changed in the context of the vCPU being run. This ensures the scheduler
-    /// can easily keep track of the vCPU state as transitions are indicated by the return code from
-    /// the run call.
-    pub state: VCpuStatus,
-
-    pub cpu: *mut Cpu,
     pub vm: *mut Vm,
-    pub regs: ArchRegs,
-    pub interrupts: Interrupts,
+
+    /// If a vCPU is running, its lock is logically held by the running pCPU.
+    pub inner: SpinLock<VCpuInner>,
+    pub interrupts: SpinLock<Interrupts>,
 }
 
 /// Encapsulates a vCPU whose lock is held.
 #[repr(C)]
-#[derive(Copy, Clone)]
 pub struct VCpuExecutionLocked {
     vcpu: *mut VCpu,
+}
+
+impl Drop for VCpuExecutionLocked {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.vcpu).inner.unlock_unchecked();
+        }
+    }
+}
+
+impl VCpuExecutionLocked {
+    pub unsafe fn from_raw(vcpu: *mut VCpu) -> Self {
+        Self { vcpu }
+    }
+
+    pub fn into_raw(self) -> *mut VCpu {
+        let ret = self.vcpu;
+        mem::forget(self);
+        ret
+    }
+
+    pub fn get_vcpu(&self) -> &VCpu {
+        unsafe { &*self.vcpu }
+    }
+
+    pub fn get_inner(&self) -> &VCpuInner {
+        unsafe { (*self.vcpu).inner.get_unchecked() }
+    }
+
+    pub fn get_inner_mut(&mut self) -> &mut VCpuInner {
+        unsafe { (*self.vcpu).inner.get_mut_unchecked() }
+    }
 }
 
 // TODO: Update alignment such that cpus are in different cache lines.
@@ -141,15 +312,8 @@ pub struct Cpu {
     /// `pub` here is only required by `arch_cpu_module_init`.
     pub stack_bottom: *mut c_void,
 
-    /// Enabling/disabling irqs are counted per-cpu. They are enabled when the count is zero, and
-    /// disabled when it's non-zero.
-    irq_disable_count: u32,
-
-    /// See api.c for the partial ordering on locks.
-    lock: RawSpinLock,
-
     /// Determines whether or not the cpu is currently on.
-    is_on: bool,
+    is_on: SpinLock<bool>,
 }
 
 // unsafe impl Sync for Cpu {}
@@ -171,12 +335,11 @@ extern "C" {
     static mut cpus: MaybeUninit<[Cpu; MAX_CPUS]>;
 }
 
-static mut cpu_count: u32 = 1;
+static mut CPU_COUNT: u32 = 1;
 
 #[no_mangle]
 pub unsafe extern "C" fn cpu_init(c: *mut Cpu) {
     // TODO: Assumes that c is zeroed out already.
-    sl_init(&mut (*c).lock);
 }
 
 #[no_mangle]
@@ -187,14 +350,14 @@ pub unsafe extern "C" fn cpu_module_init(cpu_ids: *mut cpu_id_t, count: usize) {
 
     arch_cpu_module_init();
 
-    cpu_count = count as u32;
+    CPU_COUNT = count as u32;
 
     // Initialize CPUs with the IDs from the configuration passed in. The
     // CPUs after the boot CPU are initialized in reverse order. The boot
     // CPU is initialized when it is found or in place of the last CPU if it
     // is not found.
-    j = cpu_count;
-    for i in 0..cpu_count {
+    j = CPU_COUNT;
+    for i in 0..CPU_COUNT {
         let c: *mut Cpu;
         let id: cpu_id_t = *cpu_ids.offset(i as isize);
 
@@ -233,19 +396,15 @@ pub unsafe extern "C" fn cpu_index(c: *mut Cpu) -> usize {
 #[no_mangle]
 pub unsafe extern "C" fn cpu_on(c: *mut Cpu, entry: ipaddr_t, arg: uintreg_t) -> bool {
     let prev: bool;
-
-    sl_lock(&(*c).lock);
-    prev = (*c).is_on;
-    (*c).is_on = true;
-    sl_unlock(&(*c).lock);
+    let mut is_on = (*c).is_on.lock();
+    prev = *is_on;
+    *is_on = true;
 
     if !prev {
         let vm = vm_find(HF_PRIMARY_VM_ID);
         let vcpu = vm_get_vcpu(vm, cpu_index(c) as u16);
-        let mut vcpu_execution_locked = vcpu_lock(vcpu);
 
-        vcpu_on(vcpu_execution_locked, entry, arg);
-        vcpu_unlock(&mut vcpu_execution_locked);
+        (*vcpu).inner.lock().on(entry, arg);
     }
 
     prev
@@ -254,15 +413,13 @@ pub unsafe extern "C" fn cpu_on(c: *mut Cpu, entry: ipaddr_t, arg: uintreg_t) ->
 /// Prepares the CPU for turning itself off.
 #[no_mangle]
 pub unsafe extern "C" fn cpu_off(c: *mut Cpu) {
-    sl_lock(&(*c).lock);
-    (*c).is_on = true;
-    sl_unlock(&(*c).lock);
+    *((*c).is_on.lock()) = false;
 }
 
 /// Searches for a CPU based on its id.
 #[no_mangle]
 pub unsafe extern "C" fn cpu_find(id: cpu_id_t) -> *mut Cpu {
-    for i in 0usize..cpu_count as usize {
+    for i in 0usize..CPU_COUNT as usize {
         if cpus.get_ref()[i].id == id {
             return &mut cpus.get_mut()[i];
         }
@@ -274,7 +431,7 @@ pub unsafe extern "C" fn cpu_find(id: cpu_id_t) -> *mut Cpu {
 /// Locks the given vCPU and updates `locked` to hold the newly locked vCPU.
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_lock(vcpu: *mut VCpu) -> VCpuExecutionLocked {
-    sl_lock(&(*vcpu).execution_lock);
+    mem::forget((*vcpu).inner.lock());
 
     VCpuExecutionLocked { vcpu }
 }
@@ -282,29 +439,29 @@ pub unsafe extern "C" fn vcpu_lock(vcpu: *mut VCpu) -> VCpuExecutionLocked {
 /// Tries to lock the given vCPU, and updates `locked` if succeed.
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_try_lock(vcpu: *mut VCpu, locked: *mut VCpuExecutionLocked) -> bool {
-    if sl_try_lock(&(*vcpu).execution_lock) {
-        *locked = VCpuExecutionLocked { vcpu };
-        true
-    } else {
-        false
-    }
+    (*vcpu)
+        .inner
+        .try_lock()
+        .map(|guard| {
+            mem::forget(guard);
+            ptr::write(locked, VCpuExecutionLocked { vcpu });
+        })
+        .is_some()
 }
 
 /// Unlocks a vCPU previously locked with vcpu_lock, and updates `locked` to
 /// reflect the fact that the vCPU is no longer locked.
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_unlock(locked: *mut VCpuExecutionLocked) {
-    sl_unlock(&(*(*locked).vcpu).execution_lock);
+    drop(ptr::read(locked));
     (*locked).vcpu = ptr::null_mut();
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_init(vcpu: *mut VCpu, vm: *mut Vm) {
     memset_s(vcpu as _, mem::size_of::<VCpu>(), 0, mem::size_of::<VCpu>());
-    sl_init(&mut (*vcpu).execution_lock);
-    sl_init(&mut (*vcpu).interrupts_lock);
     (*vcpu).vm = vm;
-    (*vcpu).state = VCpuStatus::Off;
+    (*vcpu).inner.get_mut_unchecked().state = VCpuStatus::Off;
 }
 
 /// Initialise the registers for the given vCPU and set the state to
@@ -312,8 +469,8 @@ pub unsafe extern "C" fn vcpu_init(vcpu: *mut VCpu, vm: *mut Vm) {
 /// calling this.
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_on(vcpu: VCpuExecutionLocked, entry: ipaddr_t, arg: uintreg_t) {
-    arch_regs_set_pc_arg(&mut (*vcpu.vcpu).regs, entry, arg);
-    (*vcpu.vcpu).state = VCpuStatus::Ready;
+    let mut vcpu = ManuallyDrop::new(vcpu);
+    vcpu.get_inner_mut().on(entry, arg);
 }
 
 #[no_mangle]
@@ -326,12 +483,12 @@ pub unsafe extern "C" fn vcpu_index(vcpu: *const VCpu) -> spci_vcpu_index_t {
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_get_regs(vcpu: *mut VCpu) -> *mut ArchRegs {
-    &mut (*vcpu).regs
+    &mut (*vcpu).inner.get_mut_unchecked().regs
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_get_regs_const(vcpu: *const VCpu) -> *const ArchRegs {
-    &(*vcpu).regs
+    &(*vcpu).inner.get_mut_unchecked().regs
 }
 
 #[no_mangle]
@@ -341,36 +498,27 @@ pub unsafe extern "C" fn vcpu_get_vm(vcpu: *mut VCpu) -> *mut Vm {
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_get_cpu(vcpu: *mut VCpu) -> *mut Cpu {
-    (*vcpu).cpu
+    (*vcpu).inner.get_mut_unchecked().cpu
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_set_cpu(vcpu: *mut VCpu, cpu: *mut Cpu) {
-    (*vcpu).cpu = cpu;
+    (*vcpu).inner.get_mut_unchecked().cpu = cpu;
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_get_interrupts(vcpu: *mut VCpu) -> *mut Interrupts {
-    &mut (*vcpu).interrupts
+    (*vcpu).interrupts.get_mut_unchecked()
 }
 
-/// Check whether the given vcpu_state is an off state, for the purpose of
+/// Check whether the given vcpu_inner is an off state, for the purpose of
 /// turning vCPUs on and off. Note that aborted still counts as on in this
 /// context.
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_is_off(vcpu: VCpuExecutionLocked) -> bool {
-    match (*vcpu.vcpu).state {
-        VCpuStatus::Off => true,
-        _ =>
-        // Aborted still counts as ON for the purposes of PSCI,
-        // because according to the PSCI specification (section
-        // 5.7.1) a core is only considered to be off if it has
-        // been turned off with a CPU_OFF call or hasn't yet
-        // been turned on with a CPU_ON call.
-        {
-            false
-        }
-    }
+    let vcpu = ManuallyDrop::new(vcpu);
+    let result = (*vcpu.vcpu).inner.get_mut_unchecked().is_off();
+    result
 }
 
 /// Starts a vCPU of a secondary VM.
@@ -383,30 +531,21 @@ pub unsafe extern "C" fn vcpu_secondary_reset_and_start(
     entry: ipaddr_t,
     arg: uintreg_t,
 ) -> bool {
-    let mut vcpu_execution_locked;
-    let vm = (*vcpu).vm;
-    let vcpu_was_off;
+    let vm = &*(*vcpu).vm;
 
-    assert!((*vm).id != HF_PRIMARY_VM_ID);
+    assert!(vm.id != HF_PRIMARY_VM_ID);
 
-    vcpu_execution_locked = vcpu_lock(vcpu);
-    vcpu_was_off = vcpu_is_off(vcpu_execution_locked);
+    let mut state = (*vcpu).inner.lock();
+    let vcpu_was_off = state.is_off();
     if vcpu_was_off {
         // Set vCPU registers to a clean state ready for boot. As this
         // is a secondary which can migrate between pCPUs, the ID of the
         // vCPU is defined as the index and does not match the ID of the
         // pCPU it is running on.
-        arch_regs_reset(
-            &mut (*vcpu).regs,
-            false,
-            (*vm).id,
-            vcpu_index(vcpu) as cpu_id_t,
-            (*vm).get_ptable_raw(),
-        );
-        vcpu_on(vcpu_execution_locked, entry, arg);
+        state.regs.reset(false, vm, vcpu_index(vcpu) as cpu_id_t);
+        state.on(entry, arg);
     }
 
-    vcpu_unlock(&mut vcpu_execution_locked);
     vcpu_was_off
 }
 

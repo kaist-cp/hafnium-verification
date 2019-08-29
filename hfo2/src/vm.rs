@@ -25,7 +25,6 @@ use arrayvec::ArrayVec;
 use crate::addr::*;
 use crate::arch::*;
 use crate::cpu::*;
-use crate::dlog::*;
 use crate::list::*;
 use crate::mm::*;
 use crate::mpool::*;
@@ -153,7 +152,9 @@ impl Mailbox {
         let mut hypervisor_ptable = HYPERVISOR_PAGE_TABLE.lock();
 
         // Map the send page as read-only in the hypervisor address space.
-        if hypervisor_ptable.identity_map(pa_send_begin, pa_send_end, Mode::R, local_page_pool).is_some()
+        if hypervisor_ptable
+            .identity_map(pa_send_begin, pa_send_end, Mode::R, local_page_pool)
+            .is_some()
         {
             self.send = pa_addr(pa_send_begin) as usize as *const SpciMessage;
         } else {
@@ -165,7 +166,9 @@ impl Mailbox {
 
         // Map the receive page as writable in the hypervisor address space. On
         // failure, unmap the send page before returning.
-        if hypervisor_ptable.identity_map(pa_recv_begin, pa_recv_end, Mode::W, local_page_pool).is_some()
+        if hypervisor_ptable
+            .identity_map(pa_recv_begin, pa_recv_end, Mode::W, local_page_pool)
+            .is_some()
         {
             self.recv = pa_addr(pa_recv_begin) as usize as *mut SpciMessage;
         } else {
@@ -269,60 +272,55 @@ impl VmInner {
         let local_page_pool: MPool = MPool::new_with_fallback(fallback_mpool);
 
         // Take memory ownership away from the VM and mark as shared.
-        self.ptable.identity_map(
-            pa_send_begin,
-            pa_send_end,
-            Mode::UNOWNED | Mode::SHARED | Mode::R | Mode::W,
-            &local_page_pool,
-        ).ok_or(())?;
+        self.ptable
+            .identity_map(
+                pa_send_begin,
+                pa_send_end,
+                Mode::UNOWNED | Mode::SHARED | Mode::R | Mode::W,
+                &local_page_pool,
+            )
+            .ok_or(())?;
 
-        if self.ptable.identity_map(
-            pa_recv_begin,
-            pa_recv_end,
-            Mode::UNOWNED | Mode::SHARED | Mode::R,
-            &local_page_pool,
-        ).is_none() {
+        if self
+            .ptable
+            .identity_map(
+                pa_recv_begin,
+                pa_recv_end,
+                Mode::UNOWNED | Mode::SHARED | Mode::R,
+                &local_page_pool,
+            )
+            .is_none()
+        {
             // TODO: partial defrag of failed range.
             // Recover any memory consumed in failed mapping.
             self.ptable.defrag(&local_page_pool);
 
             assert!(self
                 .ptable
-                .identity_map(
-                    pa_send_begin,
-                    pa_send_end,
-                    orig_send_mode,
-                    &local_page_pool
-                )
+                .identity_map(pa_send_begin, pa_send_end, orig_send_mode, &local_page_pool)
                 .is_some());
             return Err(());
         }
 
-        if self.mailbox.configure_stage1(
-            pa_send_begin,
-            pa_send_end,
-            pa_recv_begin,
-            pa_recv_end,
-            &local_page_pool,
-        ).is_err() {
+        if self
+            .mailbox
+            .configure_stage1(
+                pa_send_begin,
+                pa_send_end,
+                pa_recv_begin,
+                pa_recv_end,
+                &local_page_pool,
+            )
+            .is_err()
+        {
             assert!(self
                 .ptable
-                .identity_map(
-                    pa_recv_begin,
-                    pa_recv_end,
-                    orig_recv_mode,
-                    &local_page_pool
-                )
+                .identity_map(pa_recv_begin, pa_recv_end, orig_recv_mode, &local_page_pool)
                 .is_some());
 
             assert!(self
                 .ptable
-                .identity_map(
-                    pa_send_begin,
-                    pa_send_end,
-                    orig_send_mode,
-                    &local_page_pool
-                )
+                .identity_map(pa_send_begin, pa_send_end, orig_send_mode, &local_page_pool)
                 .is_some());
 
             return Err(());
@@ -372,13 +370,15 @@ impl VmInner {
             .get_mode(send, ipa_add(send, PAGE_SIZE))
             .filter(|mode| mode.valid_owned_and_exclusive())
             .filter(|mode| mode.contains(Mode::R))
-            .filter(|mode| mode.contains(Mode::W)).ok_or(())?;
+            .filter(|mode| mode.contains(Mode::W))
+            .ok_or(())?;
 
         let orig_recv_mode = self
             .ptable
             .get_mode(recv, ipa_add(recv, PAGE_SIZE))
             .filter(|mode| mode.valid_owned_and_exclusive())
-            .filter(|mode| mode.contains(Mode::R)).ok_or(())?;
+            .filter(|mode| mode.contains(Mode::R))
+            .ok_or(())?;
 
         self.configure_pages(
             pa_send_begin,
@@ -517,8 +517,8 @@ pub struct TwoVmLocked {
     pub vm2: VmLocked,
 }
 
-static mut vms: MaybeUninit<[Vm; MAX_VMS]> = MaybeUninit::uninit();
-static mut vm_count: spci_vm_count_t = 0;
+static mut VMS: MaybeUninit<[Vm; MAX_VMS]> = MaybeUninit::uninit();
+static mut VM_COUNT: spci_vm_count_t = 0;
 
 #[no_mangle]
 pub unsafe extern "C" fn vm_init(
@@ -526,14 +526,13 @@ pub unsafe extern "C" fn vm_init(
     ppool: *mut MPool,
     new_vm: *mut *mut Vm,
 ) -> bool {
-    let i: i32;
     let vm: *mut Vm;
 
-    if vm_count as usize >= MAX_VMS {
+    if VM_COUNT as usize >= MAX_VMS {
         return false;
     }
 
-    vm = &mut vms.get_mut()[vm_count as usize];
+    vm = &mut VMS.get_mut()[VM_COUNT as usize];
 
     memset_s(
         vm as usize as _,
@@ -542,17 +541,20 @@ pub unsafe extern "C" fn vm_init(
         mem::size_of::<Vm>(),
     );
 
-    (*vm).id = vm_count;
+    (*vm).id = VM_COUNT;
     (*vm).vcpu_count = vcpu_count;
     (*vm).aborting = AtomicBool::new(false);
-    (*vm).inner.get_mut_unchecked().init(vm, &mut *ppool);
+    let result = (*vm).inner.get_mut_unchecked().init(vm, &mut *ppool);
+    if result.is_err() {
+        return false;
+    }
 
     // Do basic initialization of vcpus.
     for i in 0..vcpu_count {
         vcpu_init(vm_get_vcpu(vm, i), vm);
     }
 
-    vm_count += 1;
+    VM_COUNT += 1;
     *new_vm = vm;
 
     true
@@ -560,27 +562,24 @@ pub unsafe extern "C" fn vm_init(
 
 #[no_mangle]
 pub unsafe extern "C" fn vm_get_count() -> spci_vm_count_t {
-    vm_count
+    VM_COUNT
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vm_find(id: spci_vm_id_t) -> *mut Vm {
     // Ensure the VM is initialized.
-    if id >= vm_count {
+    if id >= VM_COUNT {
         return ptr::null_mut();
     }
 
-    &mut vms.get_mut()[id as usize]
+    &mut VMS.get_mut()[id as usize]
 }
 
 /// Locks the given VM and updates `locked` to hold the newly locked vm.
 #[no_mangle]
 pub unsafe extern "C" fn vm_lock(vm: *mut Vm) -> VmLocked {
-    let locked = VmLocked { vm };
-
-    (*vm).inner.lock().into_raw();
-
-    locked
+    mem::forget((*vm).inner.lock());
+    VmLocked { vm }
 }
 
 /// Locks two VMs ensuring that the locking order is according to the locks'
@@ -601,9 +600,7 @@ pub unsafe extern "C" fn vm_lock_both(vm1: *mut Vm, vm2: *mut Vm) -> TwoVmLocked
 /// the fact that the VM is no longer locked.
 #[no_mangle]
 pub unsafe extern "C" fn vm_unlock(locked: *mut VmLocked) {
-    let guard =
-        SpinLockGuard::<'static, VmInner>::from_raw(&(*(*locked).vm).inner as *const _ as usize);
-    mem::drop(guard);
+    (*(*locked).vm).inner.unlock_unchecked();
     (*locked).vm = ptr::null_mut();
 }
 
