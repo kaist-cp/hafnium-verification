@@ -24,7 +24,6 @@
 
 #define PAGE_BITS 12
 #define PAGE_LEVEL_BITS 9
-#define STACK_ALIGN 16
 #define FLOAT_REG_BYTES 16
 #define NUM_GP_REGS 31
 
