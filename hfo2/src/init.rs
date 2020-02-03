@@ -96,8 +96,6 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
 
     let mm = MemoryManager::new(&ppool).expect("mm_init failed");
 
-    mm.cpu_init();
-
     // Enable locks now that mm is initialised.
     dlog_enable_lock();
     mpool_enable_locks();
@@ -205,9 +203,8 @@ pub fn hypervisor() -> &'static Hypervisor {
 // all state and return the first vCPU to run.
 #[no_mangle]
 pub unsafe extern "C" fn cpu_main(c: *const Cpu) -> *const VCpu {
-    if hypervisor().cpu_manager.index_of(c) != 0 {
-        hypervisor().memory_manager.cpu_init();
-    }
+    let raw_ptable = hypervisor().memory_manager.get_raw_ptable();
+    MemoryManager::cpu_init(raw_ptable).expect("mm_cpu_init failed");
 
     let primary = hypervisor().vm_manager.get_primary();
     let vcpu = &primary.vcpus[hypervisor().cpu_manager.index_of(c)];
