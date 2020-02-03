@@ -19,7 +19,6 @@
 
 #include "hf/fdt.h"
 #include "hf/memiter.h"
-#include "hf/mm.h"
 
 #include "hftest.h"
 #include "hftest_common.h"
@@ -36,14 +35,6 @@ void kmain(const struct fdt_header *fdt)
 	uint32_t bootargs_size;
 	struct memiter bootargs_iter;
 	struct memiter command;
-
-	/*
-	 * Initialize the stage-1 MMU and identity-map the entire address space.
-	 */
-	if ((VM_TOOLCHAIN == 1) && !hftest_mm_init()) {
-		HFTEST_LOG("Memory initialization failed.");
-		return;
-	}
 
 	hftest_use_list(hftest_begin, hftest_end - hftest_begin);
 

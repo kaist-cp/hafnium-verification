@@ -17,9 +17,10 @@ import("//build/toolchain/platform.gni")
 
 # The hypervisor image.
 hypervisor("hafnium") {
-  libs = ["//hfo2/target/aarch64-hfo2/release/libhfo2.a"]
+  sources = [
+    "layout.c",
+  ]
   deps = [
-    ":layout",
     ":src_not_testable_yet",
   ]
 }
@@ -30,6 +31,7 @@ source_set("src_not_testable_yet") {
   sources = [
     "plat.c",
   ]
+  libs = ["//hfo2/target/aarch64-hfo2/release/libhfo2.a"]
   deps = [
     ":src_testable",
     "//project/${project}/${plat_name}",
@@ -51,7 +53,6 @@ source_set("src_testable") {
     ":fdt",
     ":fdt_handler",
     ":memiter",
-    ":mm",
     ":std",
     "//src/arch/${plat_arch}/hypervisor",
     plat_console,
@@ -60,15 +61,6 @@ source_set("src_testable") {
   if (is_debug) {
     deps += [ ":dlog" ]
   }
-}
-
-source_set("layout") {
-  sources = [
-    "layout.c",
-  ]
-}
-
-source_set("mm") {
 }
 
 # Standard library functions.
