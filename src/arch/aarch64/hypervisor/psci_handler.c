@@ -37,8 +37,7 @@ void cpu_entry(struct cpu *c);
 /* Performs arch specific boot time initialisation. */
 void arch_one_time_init(void)
 {
-	smc_res_t smc_res =
-		smc32(PSCI_VERSION, 0, 0, 0, 0, 0, 0, SMCCC_CALLER_HYPERVISOR);
+	smc_res_t smc_res = smc32(PSCI_VERSION, 0, 0, 0, 0, 0, 0, 0);
 
 	el3_psci_version = smc_res.res0;
 
@@ -104,8 +103,7 @@ bool psci_primary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 				*ret = 0;
 			} else {
 				/* PSCI 1.x only defines two feature bits. */
-				smc_res = smc32(func, arg0, 0, 0, 0, 0, 0,
-						SMCCC_CALLER_HYPERVISOR);
+				smc_res = smc32(func, arg0, 0, 0, 0, 0, 0, 0);
 				*ret = smc_res.res0 & 0x3;
 			}
 			break;
@@ -129,14 +127,12 @@ bool psci_primary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 		break;
 
 	case PSCI_SYSTEM_OFF:
-		smc32(PSCI_SYSTEM_OFF, 0, 0, 0, 0, 0, 0,
-		      SMCCC_CALLER_HYPERVISOR);
+		smc32(PSCI_SYSTEM_OFF, 0, 0, 0, 0, 0, 0, 0);
 		panic("System off failed");
 		break;
 
 	case PSCI_SYSTEM_RESET:
-		smc32(PSCI_SYSTEM_RESET, 0, 0, 0, 0, 0, 0,
-		      SMCCC_CALLER_HYPERVISOR);
+		smc32(PSCI_SYSTEM_RESET, 0, 0, 0, 0, 0, 0, 0);
 		panic("System reset failed");
 		break;
 
@@ -170,15 +166,14 @@ bool psci_primary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 		 */
 		arch_regs_set_pc_arg(vcpu_get_regs(vcpu), ipa_init(arg1), arg2);
 		smc_res = smc64(PSCI_CPU_SUSPEND, arg0, (uintreg_t)&cpu_entry,
-				(uintreg_t)vcpu_get_cpu(vcpu), 0, 0, 0,
-				SMCCC_CALLER_HYPERVISOR);
+				(uintreg_t)vcpu_get_cpu(vcpu), 0, 0, 0, 0);
 		*ret = smc_res.res0;
 		break;
 	}
 
 	case PSCI_CPU_OFF:
 		cpu_off(vcpu_get_cpu(vcpu));
-		smc32(PSCI_CPU_OFF, 0, 0, 0, 0, 0, 0, SMCCC_CALLER_HYPERVISOR);
+		smc32(PSCI_CPU_OFF, 0, 0, 0, 0, 0, 0, 0);
 		panic("CPU off failed");
 		break;
 
@@ -201,9 +196,9 @@ bool psci_primary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 		 * itself off).
 		 */
 		do {
-			smc_res = smc64(PSCI_CPU_ON, arg0,
-					(uintreg_t)&cpu_entry, (uintreg_t)c, 0,
-					0, 0, SMCCC_CALLER_HYPERVISOR);
+			smc_res =
+				smc64(PSCI_CPU_ON, arg0, (uintreg_t)&cpu_entry,
+				      (uintreg_t)c, 0, 0, 0, 0);
 			*ret = smc_res.res0;
 		} while (*ret == PSCI_ERROR_ALREADY_ON);
 

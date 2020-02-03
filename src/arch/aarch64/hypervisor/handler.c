@@ -247,61 +247,21 @@ static void set_virtual_interrupt_current(bool enable)
 	write_msr(hcr_el2, hcr_el2);
 }
 
-static bool smc_check_client_privileges(const struct vcpu *vcpu)
+static bool smc_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
+			uintreg_t arg1, uintreg_t arg2, uintreg_t *ret,
+			struct vcpu **next)
 {
-	(void)vcpu; /*UNUSED*/
-
-	/*
-	 * TODO(b/132421503): Check for privileges based on manifest.
-	 * Currently returns false, which maintains existing behavior.
-	 */
-
-	return false;
-}
-
-/**
- * Applies SMC access control according to manifest.
- * Forwards the call if access is granted.
- * Returns true if call is forwarded.
- */
-static bool smc_forwarder(const struct vcpu *vcpu_, smc_res_t *ret)
-{
-	struct vcpu *vcpu = (struct vcpu *)vcpu_;
-	uint32_t func = vcpu_get_regs(vcpu)->r[0];
-	/* TODO(b/132421503): obtain vmid according to new scheme. */
-	uint32_t client_id = vm_get_id(vcpu_get_vm(vcpu));
-
-	if (smc_check_client_privileges(vcpu)) {
-		*ret = smc64(func, vcpu_get_regs(vcpu)->r[1], vcpu_get_regs(vcpu)->r[2],
-			     vcpu_get_regs(vcpu)->r[3], vcpu_get_regs(vcpu)->r[4], vcpu_get_regs(vcpu)->r[5],
-			     vcpu_get_regs(vcpu)->r[6], client_id);
-		return true;
-	}
-
-	return false;
-}
-
-/**
- * Processes SMC instruction calls.
- */
-static bool smc_handler(struct vcpu *vcpu, smc_res_t *ret, struct vcpu **next)
-{
-	uint32_t func = vcpu_get_regs(vcpu)->r[0];
-
-	if (psci_handler(vcpu, func, vcpu_get_regs(vcpu)->r[1], vcpu_get_regs(vcpu)->r[2],
-			 vcpu_get_regs(vcpu)->r[3], &(ret->res0), next)) {
-		/* SMC PSCI calls are processed by the PSCI handler. */
+	if (psci_handler(vcpu, func, arg0, arg1, arg2, ret, next)) {
 		return true;
 	}
 
 	switch (func & ~SMCCC_CONVENTION_MASK) {
 	case HF_DEBUG_LOG:
-		api_debug_log(vcpu_get_regs(vcpu)->r[1], vcpu);
+		*ret = api_debug_log(arg0, vcpu);
 		return true;
 	}
 
-	/* Remaining SMC calls need to be forwarded. */
-	return smc_forwarder(vcpu, ret);
+	return false;
 }
 
 struct hvc_handler_return hvc_handler(uintreg_t arg0, uintreg_t arg1,
@@ -510,21 +470,19 @@ struct vcpu *sync_lower_exception(uintreg_t esr)
 
 	case 0x17: /* EC = 010111, SMC instruction. */ {
 		uintreg_t smc_pc = vcpu_get_regs(vcpu)->pc;
-		smc_res_t ret;
+		uintreg_t ret;
 		struct vcpu *next = NULL;
 
-		if (!smc_handler(vcpu, &ret, &next)) {
-			/* TODO(b/132421503): handle SMC forward rejection  */
+		if (!smc_handler(vcpu, vcpu_get_regs(vcpu)->r[0], vcpu_get_regs(vcpu)->r[1],
+				 vcpu_get_regs(vcpu)->r[2], vcpu_get_regs(vcpu)->r[3], &ret,
+				 &next)) {
 			dlog("Unsupported SMC call: %#x\n", vcpu_get_regs(vcpu)->r[0]);
-			ret.res0 = PSCI_ERROR_NOT_SUPPORTED;
+			ret = PSCI_ERROR_NOT_SUPPORTED;
 		}
 
 		/* Skip the SMC instruction. */
 		vcpu_get_regs(vcpu)->pc = smc_pc + (esr & (1u << 25) ? 4 : 2);
-		vcpu_get_regs(vcpu)->r[0] = ret.res0;
-		vcpu_get_regs(vcpu)->r[1] = ret.res1;
-		vcpu_get_regs(vcpu)->r[2] = ret.res2;
-		vcpu_get_regs(vcpu)->r[3] = ret.res3;
+		vcpu_get_regs(vcpu)->r[0] = ret;
 		return next;
 	}
 
