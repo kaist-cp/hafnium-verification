@@ -16,7 +16,11 @@ import("//build/linux/linux.gni")
 
 linux_kernel_module("linux") {
   module_name = "hafnium"
-  module_dir = "./linux"
   kernel_target = "//third_party:linux"
-  kernel_dir = "//third_party/linux"
+  kernel_src_dir = "//third_party/linux"
+  sources = [
+    "linux/Makefile",
+    "linux/hf_call.S",
+    "linux/main.c",
+  ]
 }
