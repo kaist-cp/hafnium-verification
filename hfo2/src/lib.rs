@@ -24,7 +24,6 @@
 #![feature(ptr_wrapping_offset_from)]
 #![feature(slice_from_raw_parts)]
 #![feature(linkage)]
-#![feature(try_blocks)]
 
 #[macro_use]
 extern crate bitflags;
@@ -47,7 +46,6 @@ mod abi;
 mod addr;
 mod api;
 mod arch;
-mod boot_flow;
 mod boot_params;
 mod cpu;
 mod fdt;

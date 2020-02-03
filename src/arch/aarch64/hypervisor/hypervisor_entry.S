@@ -20,7 +20,7 @@
 .global image_entry
 image_entry:
 	/* Interpret the registers passed from the loader. */
-	bl plat_boot_flow_hook
+	bl plat_entry
 
 	/* Get pointer to first cpu. */
 	adrp x0, boot_cpu

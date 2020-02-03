@@ -70,19 +70,18 @@ impl<'a> FdtNode<'a> {
 
     /// Finds the memory region where initrd is stored, and updates the fdt node
     /// cursor to the node called "chosen".
-    pub fn find_initrd(&self) -> Option<(paddr_t, paddr_t)> {
-        let mut node = self.clone();
-        if node.find_child("chosen\0".as_ptr()).is_none() {
+    pub fn find_initrd(&mut self) -> Option<(paddr_t, paddr_t)> {
+        if self.find_child("chosen\0".as_ptr()).is_none() {
             dlog!("Unable to find 'chosen'\n");
             return None;
         }
 
-        let initrd_begin = ok_or!(node.read_number("linux,initrd-start\0".as_ptr()), {
+        let initrd_begin = ok_or!(self.read_number("linux,initrd-start\0".as_ptr()), {
             dlog!("Unable to read linux,initrd-start\n");
             return None;
         });
 
-        let initrd_end = ok_or!(node.read_number("linux,initrd-end\0".as_ptr()), {
+        let initrd_end = ok_or!(self.read_number("linux,initrd-end\0".as_ptr()), {
             dlog!("Unable to read linux,initrd-end\n");
             return None;
         });
@@ -278,16 +277,12 @@ pub unsafe fn map(
 
 pub unsafe fn unmap(
     stage1_ptable: &mut PageTable<Stage1>,
-    fdt: *const FdtHeader,
+    fdt: &FdtHeader,
     ppool: &MPool,
 ) -> Result<(), ()> {
-    let fdt_addr = pa_init(fdt as usize);
+    let fdt_addr = pa_init(fdt as *const _ as usize);
 
-    stage1_ptable.unmap(
-        fdt_addr,
-        pa_add(fdt_addr, (*fdt).total_size() as usize),
-        ppool,
-    )
+    stage1_ptable.unmap(fdt_addr, pa_add(fdt_addr, fdt.total_size() as usize), ppool)
 }
 
 pub unsafe fn patch(
@@ -445,7 +440,7 @@ pub unsafe extern "C" fn fdt_unmap(
     fdt: *const FdtHeader,
     ppool: *const MPool,
 ) -> bool {
-    unmap(&mut stage1_locked, fdt, &*ppool).is_ok()
+    unmap(&mut stage1_locked, &*fdt, &*ppool).is_ok()
 }
 
 #[no_mangle]
@@ -468,14 +463,15 @@ pub unsafe extern "C" fn fdt_find_memory_ranges(root: *const fdt_node, p: *mut B
 
 #[no_mangle]
 pub unsafe extern "C" fn fdt_find_initrd(
-    n: *const fdt_node,
+    n: *mut fdt_node,
     begin: *mut paddr_t,
     end: *mut paddr_t,
 ) -> bool {
-    let node = FdtNode::from((*n).clone());
+    let mut node = FdtNode::from((*n).clone());
     let (b, e) = some_or!(node.find_initrd(), return false);
     ptr::write(begin, b);
     ptr::write(end, e);
+    ptr::write(n, node.into());
     true
 }
 

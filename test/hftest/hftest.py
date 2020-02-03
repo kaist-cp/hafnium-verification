@@ -113,7 +113,6 @@ DriverArgs = collections.namedtuple("DriverArgs", [
         "artifacts",
         "kernel",
         "initrd",
-        "manifest",
         "vm_args",
     ])
 
@@ -122,14 +121,7 @@ DriverArgs = collections.namedtuple("DriverArgs", [
 # a single invocation of the target platform.
 DriverRunState = collections.namedtuple("DriverRunState", [
         "log_path",
-        "ret_code",
     ])
-
-
-class DriverRunException(Exception):
-    """Exception thrown if subprocess invoked by a driver returned non-zero
-    status code. Used to fast-exit from a driver command sequence."""
-    pass
 
 
 class Driver:
@@ -145,34 +137,28 @@ class Driver:
     def start_run(self, run_name):
         """Hook called by Driver subclasses before they invoke the target
         platform."""
-        return DriverRunState(
-                self.args.artifacts.create_file(run_name, ".log"), 0)
+        return DriverRunState(self.args.artifacts.create_file(run_name, ".log"))
 
     def exec_logged(self, run_state, exec_args):
         """Run a subprocess on behalf of a Driver subclass and append its
         stdout and stderr to the main log."""
-        assert(run_state.ret_code == 0)
         with open(run_state.log_path, "a") as f:
             f.write("$ {}\r\n".format(" ".join(exec_args)))
             f.flush()
-            ret_code = subprocess.call(exec_args, stdout=f, stderr=f)
-            if ret_code != 0:
-                run_state = DriverRunState(run_state.log_path, ret_code)
-                raise DriverRunException()
+            return subprocess.call(exec_args, stdout=f, stderr=f)
 
-    def finish_run(self, run_state):
+    def finish_run(self, run_state, ret_code):
         """Hook called by Driver subclasses after they finished running the
         target platform. `ret_code` argument is the return code of the main
         command run by the driver. A corresponding log message is printed."""
         # Decode return code and add a message to the log.
         with open(run_state.log_path, "a") as f:
-            if run_state.ret_code == 124:
+            if ret_code == 124:
                 f.write("\r\n{}{} timed out\r\n".format(
                     HFTEST_LOG_PREFIX, HFTEST_LOG_FAILURE_PREFIX))
-            elif run_state.ret_code != 0:
+            elif ret_code != 0:
                 f.write("\r\n{}{} process return code {}\r\n".format(
-                    HFTEST_LOG_PREFIX, HFTEST_LOG_FAILURE_PREFIX,
-                    run_state.ret_code))
+                    HFTEST_LOG_PREFIX, HFTEST_LOG_FAILURE_PREFIX, ret_code))
 
         # Append log of this run to full test log.
         log_content = read_file(run_state.log_path)
@@ -181,14 +167,6 @@ class Driver:
             log_content + "\r\n\r\n")
         return log_content
 
-    def overlay_dtb(self, run_state, base_dtb, overlay_dtb, out_dtb):
-        """Overlay `overlay_dtb` over `base_dtb` into `out_dtb`."""
-        dtc_args = [
-            DTC_SCRIPT, "overlay",
-            out_dtb, base_dtb, overlay_dtb,
-        ]
-        self.exec_logged(run_state, dtc_args)
-
 
 class QemuDriver(Driver):
     """Driver which runs tests in QEMU."""
@@ -196,7 +174,7 @@ class QemuDriver(Driver):
     def __init__(self, args):
         Driver.__init__(self, args)
 
-    def gen_exec_args(self, test_args, dtb_path=None, dumpdtb_path=None):
+    def gen_exec_args(self, test_args):
         """Generate command line arguments for QEMU."""
         exec_args = [
             "timeout", "--foreground", "10s",
@@ -208,12 +186,6 @@ class QemuDriver(Driver):
             "-kernel", self.args.kernel,
         ]
 
-        if dtb_path:
-            exec_args += ["-dtb", dtb_path]
-
-        if dumpdtb_path:
-            exec_args += ["-machine", "dumpdtb=" + dumpdtb_path]
-
         if self.args.initrd:
             exec_args += ["-initrd", self.args.initrd]
 
@@ -223,33 +195,11 @@ class QemuDriver(Driver):
 
         return exec_args
 
-    def dump_dtb(self, run_state, test_args, path):
-        dumpdtb_args = self.gen_exec_args(test_args, dumpdtb_path=path)
-        self.exec_logged(run_state, dumpdtb_args)
-
     def run(self, run_name, test_args):
         """Run test given by `test_args` in QEMU."""
         run_state = self.start_run(run_name)
-
-        try:
-            dtb_path = None
-
-            # If manifest DTBO specified, dump DTB from QEMU and overlay them.
-            if self.args.manifest:
-                base_dtb_path = self.args.artifacts.create_file(
-                    run_name, ".base.dtb")
-                dtb_path = self.args.artifacts.create_file(run_name, ".dtb")
-                self.dump_dtb(run_state, test_args, base_dtb_path)
-                self.overlay_dtb(
-                    run_state, base_dtb_path, self.args.manifest, dtb_path)
-
-            # Execute test in QEMU..
-            exec_args = self.gen_exec_args(test_args, dtb_path=dtb_path)
-            self.exec_logged(run_state, exec_args)
-        except DriverRunException:
-            pass
-
-        return self.finish_run(run_state)
+        ret_code = self.exec_logged(run_state, self.gen_exec_args(test_args))
+        return self.finish_run(run_state, ret_code)
 
 
 class FvpDriver(Driver):
@@ -322,8 +272,7 @@ class FvpDriver(Driver):
     def run(self, run_name, test_args):
         run_state = self.start_run(run_name)
 
-        base_dts_path = self.args.artifacts.create_file(run_name, ".base.dts")
-        base_dtb_path = self.args.artifacts.create_file(run_name, ".base.dtb")
+        dts_path = self.args.artifacts.create_file(run_name, ".dts")
         dtb_path = self.args.artifacts.create_file(run_name, ".dtb")
         uart0_log_path = self.args.artifacts.create_file(run_name, ".uart0.log")
         uart1_log_path = self.args.artifacts.create_file(run_name, ".uart1.log")
@@ -334,33 +283,20 @@ class FvpDriver(Driver):
         else:
             initrd_end = 0x85000000  # Default value
 
-        try:
-            # Create a DT to pass to FVP.
-            self.gen_dts(base_dts_path, test_args, initrd_start, initrd_end)
+        # Create a FDT to pass to FVP.
+        self.gen_dts(dts_path, test_args, initrd_start, initrd_end)
+        dtc_args = [ DTC_SCRIPT, "-i", dts_path, "-o", dtb_path ]
+        self.exec_logged(run_state, dtc_args)
 
-            # Compile DTS to DTB.
-            dtc_args = [
-                DTC_SCRIPT, "compile", "-i", base_dts_path, "-o", base_dtb_path,
-            ]
-            self.exec_logged(run_state, dtc_args)
-
-            # If manifest DTBO specified, overlay it.
-            if self.args.manifest:
-                self.overlay_dtb(
-                    run_state, base_dtb_path, self.args.manifest, dtb_path)
-            else:
-                dtb_path = base_dtb_path
-
-            # Run FVP.
-            fvp_args = self.gen_fvp_args(
-                initrd_start, uart0_log_path, uart1_log_path, dtb_path)
-            self.exec_logged(run_state, fvp_args)
-        except DriverRunException:
-            pass
+        # Run FVP.
+        fvp_args = self.gen_fvp_args(
+            initrd_start, uart0_log_path, uart1_log_path, dtb_path)
+        ret_code = self.exec_logged(run_state, fvp_args)
 
         # Append UART0 output to main log.
         append_file(run_state.log_path, read_file(uart0_log_path))
-        return self.finish_run(run_state)
+
+        return self.finish_run(run_state, ret_code)
 
 
 # Tuple used to return information about the results of running a set of tests.
@@ -516,12 +452,9 @@ def Main():
     # Resolve some paths.
     image = os.path.join(args.out, args.image + ".bin")
     initrd = None
-    manifest = None
     image_name = args.image
     if args.initrd:
-        initrd_dir = os.path.join(args.out_initrd, "obj", args.initrd)
-        initrd = os.path.join(initrd_dir, "initrd.img")
-        manifest = os.path.join(initrd_dir, "manifest.dtbo")
+        initrd = os.path.join(args.out_initrd, "obj", args.initrd, "initrd.img")
         image_name += "_" + args.initrd
     vm_args = args.vm_args or ""
 
@@ -529,7 +462,7 @@ def Main():
     artifacts = ArtifactsManager(os.path.join(args.log, image_name))
 
     # Create a driver for the platform we want to test on.
-    driver_args = DriverArgs(artifacts, image, initrd, manifest, vm_args)
+    driver_args = DriverArgs(artifacts, image, initrd, vm_args)
     if args.fvp:
         driver = FvpDriver(driver_args)
     else:

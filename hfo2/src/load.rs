@@ -16,7 +16,6 @@
 
 use core::mem;
 use core::ptr;
-use core::str;
 
 use crate::addr::*;
 use crate::arch::*;
@@ -205,7 +204,6 @@ fn update_reserved_ranges(
 pub unsafe fn load_secondary(
     vm_manager: &mut VmManager,
     hypervisor_ptable: &mut PageTable<Stage1>,
-    manifest: &mut Manifest,
     cpio: &MemIter,
     params: &BootParams,
     update: &mut BootParamsUpdate,
@@ -226,6 +224,19 @@ pub unsafe fn load_secondary(
         mem_range.end = pa_init(round_down(pa_addr(mem_range.end), PAGE_SIZE));
     }
 
+    let manifest_fdt = find_file(cpio, "manifest.dtb\0".as_ptr()).ok_or_else(|| {
+        dlog!("Could not find \"manifest.dtb\" in cpio.");
+    })?;
+
+    let mut manifest = mem::MaybeUninit::uninit().assume_init();
+
+    Manifest::init(&mut manifest, &manifest_fdt).map_err(|e| {
+        dlog!(
+            "Could not parse manifest: {}.\n",
+            <Error as Into<&'static str>>::into(e)
+        );
+    })?;
+
     for (i, manifest_vm) in manifest.vms.iter_mut().enumerate() {
         let vm_id = HF_VM_ID_OFFSET + i as spci_vm_id_t;
         if vm_id == HF_PRIMARY_VM_ID {
@@ -235,18 +246,13 @@ pub unsafe fn load_secondary(
         dlog!(
             "Loading VM{}: {}.\n",
             vm_id,
-            str::from_utf8(as_asciz(&manifest_vm.debug_name)).unwrap(),
+            manifest_vm.debug_name.as_str()
         );
 
-        let kernel_filename = MemIter::from_raw(
-            manifest_vm.kernel_filename.as_ptr(),
-            as_asciz(&manifest_vm.kernel_filename).len(),
-        );
-
-        let kernel = some_or!(find_file_memiter(cpio, &kernel_filename), {
+        let kernel = some_or!(find_file_memiter(cpio, &manifest_vm.kernel_filename), {
             dlog!(
                 "Could not find kernel file \"{}\".",
-                str::from_utf8(as_asciz(&manifest_vm.kernel_filename)).unwrap(),
+                manifest_vm.kernel_filename.as_str()
             );
             continue;
         });
