@@ -81,7 +81,8 @@ TEST(busy_secondary, virtual_timer)
 	dlog("Telling secondary to loop.\n");
 	memcpy_s(send_buffer->payload, SPCI_MSG_PAYLOAD_MAX, message,
 		 sizeof(message));
-	spci_message_init(send_buffer, 0, SERVICE_VM0, HF_PRIMARY_VM_ID);
+	spci_message_init(send_buffer, 0, SERVICE_VM0,
+			  recv_buffer->target_vm_id);
 	EXPECT_EQ(spci_msg_send(0), 0);
 	run_res = hf_vcpu_run(SERVICE_VM0, 0);
 	EXPECT_EQ(run_res.code, HF_VCPU_RUN_PREEMPTED);
@@ -138,7 +139,8 @@ TEST(busy_secondary, physical_timer)
 	dlog("Telling secondary to loop.\n");
 	memcpy_s(send_buffer->payload, SPCI_MSG_PAYLOAD_MAX, message,
 		 sizeof(message));
-	spci_message_init(send_buffer, 0, SERVICE_VM0, HF_PRIMARY_VM_ID);
+	spci_message_init(send_buffer, 0, SERVICE_VM0,
+			  recv_buffer->target_vm_id);
 	EXPECT_EQ(spci_msg_send(0), 0);
 	run_res = hf_vcpu_run(SERVICE_VM0, 0);
 	EXPECT_EQ(run_res.code, HF_VCPU_RUN_PREEMPTED);
