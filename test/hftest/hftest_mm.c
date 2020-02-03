@@ -51,13 +51,7 @@ bool hftest_mm_init(void)
 			pa_init(mm_ptable_addr_space_end(MM_FLAG_STAGE1)),
 			MM_MODE_R | MM_MODE_W | MM_MODE_X, &ppool);
 
-	if (!arch_vm_mm_init()) {
-		return false;
-	}
-
-	arch_vm_mm_enable(ptable.root);
-
-	return true;
+	return arch_vm_mm_init(ptable.root);
 }
 
 void hftest_mm_identity_map(const void *base, size_t size, int mode)
@@ -84,7 +78,7 @@ static void cpu_entry(uintptr_t arg)
 	struct cpu_start_state local = *s;
 
 	sl_unlock(&s->lock);
-	arch_vm_mm_enable(ptable.root);
+	ASSERT_TRUE(arch_vm_mm_init(ptable.root));
 	local.entry(local.arg);
 }
 
