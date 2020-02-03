@@ -43,7 +43,6 @@ pub enum SpciReturn {
 #[repr(u16)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum SpciMemoryShare {
-    Relinquish = 0x1,
     Donate = 0x2,
 }
 
