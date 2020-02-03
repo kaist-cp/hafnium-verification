@@ -63,7 +63,6 @@ bool cpu_start(uintptr_t id, void *stack, size_t stack_size,
 {
 	void vm_cpu_entry_raw(uintptr_t arg);
 	struct cpu_start_state s;
-	smc_res_t smc_res;
 
 	/* Initialise the temporary state we'll hold on the stack. */
 	sl_init(&s.lock);
@@ -73,9 +72,8 @@ bool cpu_start(uintptr_t id, void *stack, size_t stack_size,
 	s.arg = arg;
 
 	/* Try to start the CPU. */
-	smc_res = smc32(PSCI_CPU_ON, id, (size_t)&vm_cpu_entry_raw, (size_t)&s,
-			0, 0, 0, 0);
-	if (smc_res.res0 != PSCI_RETURN_SUCCESS) {
+	if (smc32(PSCI_CPU_ON, id, (size_t)&vm_cpu_entry_raw, (size_t)&s) !=
+	    PSCI_RETURN_SUCCESS) {
 		return false;
 	}
 
@@ -93,7 +91,7 @@ bool cpu_start(uintptr_t id, void *stack, size_t stack_size,
  */
 noreturn void cpu_stop(void)
 {
-	smc32(PSCI_CPU_OFF, 0, 0, 0, 0, 0, 0, 0);
+	smc32(PSCI_CPU_OFF, 0, 0, 0);
 	for (;;) {
 		/* This should never be reached. */
 	}
@@ -112,16 +110,13 @@ static_assert(POWER_STATUS_ON_PENDING == PSCI_RETURN_ON_PENDING,
 enum power_status cpu_status(cpu_id_t cpu_id)
 {
 	uint32_t lowest_affinity_level = 0;
-	smc_res_t smc_res;
 
 	/*
 	 * This works because the power_status enum values happen to be the same
 	 * as the PSCI_RETURN_* values. The static_asserts above validate that
 	 * this is the case.
 	 */
-	smc_res = smc32(PSCI_AFFINITY_INFO, cpu_id, lowest_affinity_level, 0, 0,
-			0, 0, 0);
-	return smc_res.res0;
+	return smc32(PSCI_AFFINITY_INFO, cpu_id, lowest_affinity_level, 0);
 }
 
 /**
@@ -129,7 +124,7 @@ enum power_status cpu_status(cpu_id_t cpu_id)
  */
 noreturn void arch_power_off(void)
 {
-	smc32(PSCI_SYSTEM_OFF, 0, 0, 0, 0, 0, 0, 0);
+	smc32(PSCI_SYSTEM_OFF, 0, 0, 0);
 	for (;;) {
 		/* This should never be reached. */
 	}

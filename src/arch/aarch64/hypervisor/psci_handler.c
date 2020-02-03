@@ -37,9 +37,7 @@ void cpu_entry(struct cpu *c);
 /* Performs arch specific boot time initialisation. */
 void arch_one_time_init(void)
 {
-	smc_res_t smc_res = smc32(PSCI_VERSION, 0, 0, 0, 0, 0, 0, 0);
-
-	el3_psci_version = smc_res.res0;
+	el3_psci_version = smc32(PSCI_VERSION, 0, 0, 0);
 
 	/* Check there's nothing unexpected about PSCI. */
 	switch (el3_psci_version) {
@@ -71,7 +69,6 @@ bool psci_primary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 			     uintreg_t arg1, uintreg_t arg2, uintreg_t *ret)
 {
 	struct cpu *c;
-	smc_res_t smc_res;
 
 	/*
 	 * If there's a problem with the EL3 PSCI, block standard secure service
@@ -103,8 +100,7 @@ bool psci_primary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 				*ret = 0;
 			} else {
 				/* PSCI 1.x only defines two feature bits. */
-				smc_res = smc32(func, arg0, 0, 0, 0, 0, 0, 0);
-				*ret = smc_res.res0 & 0x3;
+				*ret = smc32(func, arg0, 0, 0) & 0x3;
 			}
 			break;
 
@@ -127,12 +123,12 @@ bool psci_primary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 		break;
 
 	case PSCI_SYSTEM_OFF:
-		smc32(PSCI_SYSTEM_OFF, 0, 0, 0, 0, 0, 0, 0);
+		smc32(PSCI_SYSTEM_OFF, 0, 0, 0);
 		panic("System off failed");
 		break;
 
 	case PSCI_SYSTEM_RESET:
-		smc32(PSCI_SYSTEM_RESET, 0, 0, 0, 0, 0, 0, 0);
+		smc32(PSCI_SYSTEM_RESET, 0, 0, 0);
 		panic("System reset failed");
 		break;
 
@@ -165,15 +161,14 @@ bool psci_primary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 		 * vcpu registers will be ignored.
 		 */
 		arch_regs_set_pc_arg(vcpu_get_regs(vcpu), ipa_init(arg1), arg2);
-		smc_res = smc64(PSCI_CPU_SUSPEND, arg0, (uintreg_t)&cpu_entry,
-				(uintreg_t)vcpu_get_cpu(vcpu), 0, 0, 0, 0);
-		*ret = smc_res.res0;
+		*ret = smc64(PSCI_CPU_SUSPEND, arg0, (uintreg_t)&cpu_entry,
+			     (uintreg_t)vcpu_get_cpu(vcpu));
 		break;
 	}
 
 	case PSCI_CPU_OFF:
 		cpu_off(vcpu_get_cpu(vcpu));
-		smc32(PSCI_CPU_OFF, 0, 0, 0, 0, 0, 0, 0);
+		smc32(PSCI_CPU_OFF, 0, 0, 0);
 		panic("CPU off failed");
 		break;
 
@@ -196,10 +191,8 @@ bool psci_primary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 		 * itself off).
 		 */
 		do {
-			smc_res =
-				smc64(PSCI_CPU_ON, arg0, (uintreg_t)&cpu_entry,
-				      (uintreg_t)c, 0, 0, 0, 0);
-			*ret = smc_res.res0;
+			*ret = smc64(PSCI_CPU_ON, arg0, (uintreg_t)&cpu_entry,
+				     (uintreg_t)c);
 		} while (*ret == PSCI_ERROR_ALREADY_ON);
 
 		if (*ret != PSCI_RETURN_SUCCESS) {
