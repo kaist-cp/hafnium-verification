@@ -21,11 +21,6 @@
 
 #include "hf/spci.h"
 
-#define DLOG_BUFFER_SIZE 8192
-
-extern size_t dlog_buffer_offset;
-extern char dlog_buffer[];
-
 #if DEBUG
 void dlog_enable_lock(void);
 void dlog(const char *fmt, ...);
