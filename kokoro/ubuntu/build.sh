@@ -14,9 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-SCRIPT_NAME="$(realpath "${BASH_SOURCE[0]}")"
-ROOT_DIR="$(realpath $(dirname "${SCRIPT_NAME}")/../..)"
-
 # Fail on any error.
 set -e
 # Fail on any part of a pipeline failing.
@@ -25,20 +22,6 @@ set -o pipefail
 set -u
 # Display commands being run.
 set -x
-
-# Default value of HAFNIUM_HERMETIC_BUILD is "true" for Kokoro builds.
-if [ -v KOKORO_JOB_NAME -a ! -v HAFNIUM_HERMETIC_BUILD ]
-then
-	HAFNIUM_HERMETIC_BUILD=true
-fi
-
-# If HAFNIUM_HERMETIC_BUILD is "true" (not default), relaunch this script inside
-# a container. The 'run_in_container.sh' script will set the variable value to
-# 'inside' to avoid recursion.
-if [ "${HAFNIUM_HERMETIC_BUILD:-}" == "true" ]
-then
-	exec "${ROOT_DIR}/build/run_in_container.sh" ${SCRIPT_NAME} $@
-fi
 
 USE_FVP=0
 
@@ -60,6 +43,9 @@ if [ -v KOKORO_JOB_NAME ]
 then
 	# Server
 	cd git/hafnium
+else
+	# Local
+	echo "Testing kokoro build locally..."
 fi
 
 CLANG=${PWD}/prebuilts/linux-x64/clang/bin/clang
