@@ -322,8 +322,7 @@ vcpu_switch:
 	add x2, x1, #VCPU_GIC
 
 	mrs x3, ich_hcr_el2
-	mrs x4, icc_sre_el2
-	stp x3, x4, [x2, #16 * 0]
+	str x3, [x2, #16 * 0]
 #endif
 
 	/* Save floating point registers. */
@@ -477,9 +476,8 @@ vcpu_restore_lazy_and_run:
 	/* Offset is too large, so start from a new base. */
 	add x2, x0, #VCPU_GIC
 
-	ldp x3, x4, [x2, #16 * 0]
+	ldr x3, [x2, #16 * 0]
 	msr ich_hcr_el2, x3
-	msr icc_sre_el2, x4
 #endif
 
 	/*
