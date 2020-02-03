@@ -21,8 +21,7 @@ import os
 import subprocess
 import sys
 
-HF_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-DTC = os.path.join(HF_ROOT, "prebuilts", "linux-x64", "dtc", "dtc")
+DTC = "dtc"
 
 def main():
     parser = argparse.ArgumentParser()
