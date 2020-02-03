@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include "hftest_common.h"
+
 #include "hf/arch/vm/power_mgmt.h"
 
 #include "hf/boot_params.h"
@@ -22,7 +24,6 @@
 #include "hf/std.h"
 
 #include "hftest.h"
-#include "hftest_common.h"
 
 HFTEST_ENABLE();
 

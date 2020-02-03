@@ -38,12 +38,11 @@ source_set("hftest_secondary_vm") {
   public_configs = [ ":hftest_config" ]
 
   sources = [
-    "service.c",
+    "hftest_service.c",
   ]
 
   deps = [
     ":mm",
-    ":power_mgmt",
     "//src:dlog",
     "//src:memiter",
     "//src:panic",
@@ -94,7 +93,6 @@ source_set("hftest_standalone") {
   deps = [
     ":common",
     ":mm",
-    ":power_mgmt",
     "//src:dlog",
     "//src:fdt",
     "//src:memiter",
@@ -111,7 +109,7 @@ source_set("common") {
   testonly = true
   public_configs = [ ":hftest_config" ]
   sources = [
-    "common.c",
+    "hftest_common.c",
   ]
   libs = ["//hfo2/target/aarch64-hfo2-test/release/libhfo2.a"]
   deps = [
@@ -128,7 +126,7 @@ source_set("mm") {
   public_configs = [ ":hftest_config" ]
 
   sources = [
-    "mm.c",
+    "hftest_mm.c",
   ]
 
   libs = ["//hfo2/target/aarch64-hfo2-test/release/libhfo2.a"]
@@ -138,20 +136,5 @@ source_set("mm") {
     "//src:mm",
     "//src/arch/${plat_arch}:arch",
     "//src/arch/${plat_arch}/hftest:mm",
-  ]
-}
-
-source_set("power_mgmt") {
-  testonly = true
-
-  public_configs = [ ":hftest_config" ]
-
-  sources = [
-    "power_mgmt.c",
-  ]
-
-  deps = [
-    ":mm",
-    "//src/arch/${plat_arch}/hftest:power_mgmt",
   ]
 }
