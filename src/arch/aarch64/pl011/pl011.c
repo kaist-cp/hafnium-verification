@@ -57,10 +57,12 @@ void plat_console_putchar(char c)
 		/* do nothing */
 	}
 
-	/* Write the character out, force memory access ordering. */
-	memory_ordering_barrier();
+	dmb();
+
+	/* Write the character out. */
 	io_write32(UARTDR, c);
-	memory_ordering_barrier();
+
+	dmb();
 
 	/* Wait until the UART is no longer busy. */
 	while (io_read32_mb(UARTFR) & UARTFR_BUSY) {

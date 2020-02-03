@@ -14,22 +14,19 @@
  * limitations under the License.
  */
 
-#pragma once
+#include "hf/arch/barriers.h"
 
-/**
- * Ensures all explicit memory accesses before this point are completed before
- * any later memory accesses are performed.
- */
-void dmb(void);
+void dmb(void)
+{
+	__asm__ volatile("dmb sy");
+}
 
-/**
- * Ensures all explicit memory access and management instructions have completed
- * before continuing.
- */
-void dsb(void);
+void dsb(void)
+{
+	__asm__ volatile("dsb sy");
+}
 
-/**
- * Flushes the instruction pipeline so that instructions are fetched from
- * memory.
- */
-void isb(void);
+void isb(void)
+{
+	__asm__ volatile("isb");
+}

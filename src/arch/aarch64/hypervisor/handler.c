@@ -18,7 +18,6 @@
 
 #include "hf/arch/barriers.h"
 #include "hf/arch/init.h"
-#include "hf/arch/mm.h"
 
 #include "hf/api.h"
 #include "hf/cpu.h"
@@ -103,6 +102,15 @@ void begin_restoring_state(struct vcpu *vcpu)
 }
 
 /**
+ * Ensures all explicit memory access and management instructions for
+ * non-shareable normal memory have completed before continuing.
+ */
+static void dsb_nsh(void)
+{
+	__asm__ volatile("dsb nsh");
+}
+
+/**
  * Invalidate all stage 1 TLB entries on the current (physical) CPU for the
  * current VMID.
  */
@@ -127,7 +135,7 @@ static void invalidate_vm_tlb(void)
 	 * TLB invalidation has taken effect. Non-sharable is enough because the
 	 * TLB is local to the CPU.
 	 */
-	dsb(nsh);
+	dsb_nsh();
 }
 
 /**
