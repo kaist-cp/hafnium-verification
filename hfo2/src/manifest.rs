@@ -34,13 +34,11 @@ pub enum Error {
     CorruptedFdt,
     NoRootFdtNode,
     NoHypervisorFdtNode,
-    NotCompatible,
     ReservedVmId,
     NoPrimaryVm,
     TooManyVms,
     PropertyNotFound,
     MalformedString,
-    MalformedStringList,
     MalformedInteger,
     IntegerOverflow,
 }
@@ -52,7 +50,6 @@ impl Into<&'static str> for Error {
             CorruptedFdt => "Manifest failed FDT validation",
             NoRootFdtNode => "Could not find root node of manifest",
             NoHypervisorFdtNode => "Could not find \"hypervisor\" node in manifest",
-            NotCompatible => "Hypervisor manifest entry not compatible with Hafnium",
             ReservedVmId => "Manifest defines a VM with a reserved ID",
             NoPrimaryVm => "Manifest does not contain a primary VM entry",
             TooManyVms => {
@@ -60,7 +57,6 @@ impl Into<&'static str> for Error {
             }
             PropertyNotFound => "Property not found",
             MalformedString => "Malformed string property",
-            MalformedStringList => "Malformed string list property",
             MalformedInteger => "Malformed integer property",
             IntegerOverflow => "Integer overflow",
         }
@@ -121,8 +117,7 @@ fn read_string<'a>(node: &FdtNode<'a>, property: *const u8) -> Result<MemIter, E
         .read_property(property)
         .map_err(|_| Error::PropertyNotFound)?;
 
-    // Require that the value contains exactly one NULL character and that it is the last byte.
-    if data.iter().position(|&c| c == b'\0') != Some(data.len() - 1) {
+    if data[data.len() - 1] != b'\0' {
         return Err(Error::MalformedString);
     }
 
@@ -141,70 +136,6 @@ fn read_u16<'a>(node: &FdtNode<'a>, property: *const u8) -> Result<u16, Error> {
     let value = read_u64(node, property)?;
 
     value.try_into().map_err(|_| Error::IntegerOverflow)
-}
-
-/// Represents the value of property whose type is a list of strings. These are encoded as one
-/// contiguous byte buffer with NULL-separated entries.
-#[derive(Clone)]
-struct StringList {
-    mem_it: MemIter,
-}
-
-impl StringList {
-    fn read_from<'a>(node: &FdtNode<'a>, property: *const u8) -> Result<Self, Error> {
-        let data = node
-            .read_property(property)
-            .map_err(|_| Error::PropertyNotFound)?;
-
-        // Require that the value ends with a NULL terminator. Other NULL characters separate the
-        // string list entries.
-        if *data.last().unwrap() != b'\0' {
-            return Err(Error::MalformedStringList);
-        }
-
-        Ok(Self {
-            mem_it: unsafe { MemIter::from_raw(data.as_ptr(), data.len() - 1) },
-        })
-    }
-
-    fn has_next(&self) -> bool {
-        self.mem_it.len() > 0
-    }
-
-    fn get_next(&mut self) -> MemIter {
-        assert!(self.has_next());
-
-        let null_term = unsafe { self.mem_it.as_slice() }
-            .iter()
-            .position(|&c| c == b'\0');
-        if let Some(pos) = null_term {
-            // Found NULL terminator. Set entry memiter to byte range [base, null) and move list
-            // memiter past the terminator.
-            let ret = unsafe { MemIter::from_raw(self.mem_it.get_next(), pos) };
-            self.mem_it.advance(pos + 1).unwrap();
-            ret
-        } else {
-            // NULL terminator not found, this is the last entry.
-            // Set entry memiter to the entire byte range and advance list memiter to the end of
-            // the byte range.
-            let ret = self.mem_it.clone();
-            self.mem_it.advance(self.mem_it.len()).unwrap();
-            ret
-        }
-    }
-
-    fn contains(&self, asciz: &[u8]) -> bool {
-        let mut it = self.clone();
-
-        while it.has_next() {
-            let entry = it.get_next();
-            if unsafe { entry.iseq(asciz.as_ptr()) } {
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 impl ManifestVm {
@@ -248,12 +179,6 @@ impl Manifest {
         hyp_node
             .find_child("hypervisor\0".as_ptr())
             .ok_or(Error::NoHypervisorFdtNode)?;
-
-        // Check "compatible" property.
-        let compatible_list = StringList::read_from(&hyp_node, "compatible\0".as_ptr())?;
-        if !compatible_list.contains(b"hafnium,hafnium\0") {
-            return Err(Error::NotCompatible);
-        }
 
         // Iterate over reserved VM IDs and check no such nodes exist.
         for vm_id in 0..HF_VM_ID_OFFSET {
@@ -363,14 +288,6 @@ mod test {
             self
         }
 
-        fn compatible(&mut self, value: &[&str]) -> &mut Self {
-            self.string_list_property("compatible", value)
-        }
-
-        fn compatible_hafnium(&mut self) -> &mut Self {
-            self.compatible(&["hafnium,hafnium"])
-        }
-
         fn debug_name(&mut self, value: &str) -> &mut Self {
             self.string_property("debug_name", value)
         }
@@ -392,13 +309,6 @@ mod test {
             self
         }
 
-        fn string_list_property(&mut self, name: &str, value: &[&str]) -> &mut Self {
-            write!(self.dts, "{} = \"", name);
-            self.dts.push_str(&value.join("\", \""));
-            self.dts.push_str("\";\n");
-            self
-        }
-
         fn integer_property(&mut self, name: &str, value: u64) -> &mut Self {
             write!(self.dts, "{} = <{}>;\n", name, value).unwrap();
             self
@@ -415,51 +325,9 @@ mod test {
     }
 
     #[test]
-    fn no_compatible_property() {
+    fn no_vms() {
         let dtb = ManifestDtBuilder::new()
             .start_child("hypervisor")
-            .end_child()
-            .build();
-
-        let it = unsafe { MemIter::from_raw(dtb.as_ptr(), dtb.len()) };
-        let mut m: Manifest = unsafe { MaybeUninit::uninit().assume_init() };
-        assert_eq!(m.init(&it).unwrap_err(), Error::PropertyNotFound);
-    }
-
-    #[test]
-    fn not_compatible() {
-        let dtb = ManifestDtBuilder::new()
-            .start_child("hypervisor")
-            .compatible(&["foo,bar"])
-            .end_child()
-            .build();
-
-        let it = unsafe { MemIter::from_raw(dtb.as_ptr(), dtb.len()) };
-        let mut m: Manifest = unsafe { MaybeUninit::uninit().assume_init() };
-        assert_eq!(m.init(&it).unwrap_err(), Error::NotCompatible);
-    }
-
-    #[test]
-    fn compatible_one_of_many() {
-        let dtb = ManifestDtBuilder::new()
-            .start_child("hypervisor")
-            .compatible(&["foo,bar", "hafnium,hafnium"])
-            .start_child("vm1")
-            .debug_name("primary")
-            .end_child()
-            .end_child()
-            .build();
-
-        let it = unsafe { MemIter::from_raw(dtb.as_ptr(), dtb.len()) };
-        let mut m: Manifest = unsafe { MaybeUninit::uninit().assume_init() };
-        m.init(&it).unwrap();
-    }
-
-    #[test]
-    fn no_vm_nodes() {
-        let dtb = ManifestDtBuilder::new()
-            .start_child("hypervisor")
-            .compatible_hafnium()
             .end_child()
             .build();
 
@@ -469,10 +337,9 @@ mod test {
     }
 
     #[test]
-    fn reserved_vm_id() {
+    fn reserved_vmid() {
         let dtb = ManifestDtBuilder::new()
             .start_child("hypervisor")
-            .compatible_hafnium()
             .start_child("vm1")
             .debug_name("primary_vm")
             .end_child()
@@ -495,7 +362,6 @@ mod test {
         fn gen_vcpu_count_limit_dtb(vcpu_count: u64) -> Vec<u8> {
             ManifestDtBuilder::new()
                 .start_child("hypervisor")
-                .compatible_hafnium()
                 .start_child("vm1")
                 .debug_name("primary_vm")
                 .end_child()
@@ -526,7 +392,6 @@ mod test {
     fn valid() {
         let dtb = ManifestDtBuilder::new()
             .start_child("hypervisor")
-            .compatible_hafnium()
             .start_child("vm1")
             .debug_name("primary_vm")
             .end_child()
