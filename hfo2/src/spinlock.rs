@@ -144,8 +144,8 @@ pub struct SpinLockGuard<'s, T> {
     _marker: PhantomData<*const ()>, // !Send + !Sync
 }
 
-unsafe impl<'s, T> Send for SpinLockGuard<'s, T> {}
-unsafe impl<'s, T: Send + Sync> Sync for SpinLockGuard<'s, T> {}
+unsafe impl<'s, T: Send> Send for SpinLockGuard<'s, T> {}
+unsafe impl<'s, T: Sync> Sync for SpinLockGuard<'s, T> {}
 
 impl<'s, T> SpinLockGuard<'s, T> {
     pub fn raw(&mut self) -> usize {
