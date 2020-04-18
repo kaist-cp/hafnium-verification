@@ -22,6 +22,16 @@
 
 #include "hf/cpu.h"
 
+#include "msr.h"
+
 bool psci_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 		  uintreg_t arg1, uintreg_t arg2, uintreg_t *ret,
 		  struct vcpu **next);
+
+/**
+ * Returns a reference to the currently executing vCPU.
+ */
+static inline struct vcpu *current(void)
+{
+	return (struct vcpu *)read_msr(tpidr_el2);
+}

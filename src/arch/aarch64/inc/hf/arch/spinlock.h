@@ -28,6 +28,7 @@
  * the guarantees provided by atomic instructions introduced in Armv8.1 LSE.
  */
 
+#include <stdatomic.h>
 #include <stdint.h>
 
 #include "hf/arch/types.h"
@@ -59,6 +60,12 @@ static inline void sl_lock(struct spinlock *l)
 		: "+m"(*l), "=&r"(tmp1), "=&r"(tmp2)
 		: "r"(l)
 		: "cc");
+}
+
+static inline bool sl_try_lock(struct spinlock *l)
+{
+	return !atomic_flag_test_and_set_explicit((volatile atomic_flag *)&l->v,
+						  memory_order_acquire);
 }
 
 static inline void sl_unlock(struct spinlock *l)

@@ -27,6 +27,7 @@
 #include "hf/dlog.h"
 #include "hf/panic.h"
 #include "hf/spci.h"
+#include "hf/spinlock.h"
 #include "hf/vm.h"
 
 #include "vmapi/hf/call.h"
@@ -50,14 +51,6 @@
  * The Client ID field within X7 for an SMC64 call.
  */
 #define CLIENT_ID_MASK UINT64_C(0xffff)
-
-/**
- * Returns a reference to the currently executing vCPU.
- */
-static struct vcpu *current(void)
-{
-	return (struct vcpu *)read_msr(tpidr_el2);
-}
 
 /**
  * Saves the state of per-vCPU peripherals, such as the virtual timer, and
@@ -398,20 +391,20 @@ static void update_vi(struct vcpu *next)
 		 */
 		struct vcpu *vcpu = current();
 
-		sl_lock(&vcpu->lock);
+		sl_lock(&vcpu->interrupts_lock);
 		set_virtual_interrupt_current(
 			vcpu->interrupts.enabled_and_pending_count > 0);
-		sl_unlock(&vcpu->lock);
+		sl_unlock(&vcpu->interrupts_lock);
 	} else {
 		/*
 		 * About to switch vCPUs, set the bit for the vCPU to which we
 		 * are switching in the saved copy of the register.
 		 */
-		sl_lock(&next->lock);
+		sl_lock(&next->interrupts_lock);
 		set_virtual_interrupt(
 			&next->regs,
 			next->interrupts.enabled_and_pending_count > 0);
-		sl_unlock(&next->lock);
+		sl_unlock(&next->interrupts_lock);
 	}
 }
 

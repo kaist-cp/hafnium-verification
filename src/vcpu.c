@@ -24,13 +24,13 @@
 /**
  * Locks the given vCPU and updates `locked` to hold the newly locked vCPU.
  */
-struct vcpu_locked vcpu_lock(struct vcpu *vcpu)
+struct vcpu_execution_locked vcpu_lock(struct vcpu *vcpu)
 {
-	struct vcpu_locked locked = {
+	struct vcpu_execution_locked locked = {
 		.vcpu = vcpu,
 	};
 
-	sl_lock(&vcpu->lock);
+	sl_lock(&vcpu->execution_lock);
 
 	return locked;
 }
@@ -39,26 +39,40 @@ struct vcpu_locked vcpu_lock(struct vcpu *vcpu)
  * Unlocks a vCPU previously locked with vpu_lock, and updates `locked` to
  * reflect the fact that the vCPU is no longer locked.
  */
-void vcpu_unlock(struct vcpu_locked *locked)
+void vcpu_unlock(struct vcpu_execution_locked *locked)
 {
-	sl_unlock(&locked->vcpu->lock);
+	sl_unlock(&locked->vcpu->execution_lock);
 	locked->vcpu = NULL;
+}
+
+/**
+ * Tries to lock the given vCPU, but doesn't block if it is locked.
+ **/
+bool vcpu_try_lock(struct vcpu *vcpu, struct vcpu_execution_locked *locked)
+{
+	if (!sl_try_lock(&vcpu->execution_lock)) {
+		return false;
+	}
+
+	locked->vcpu = vcpu;
+	return true;
 }
 
 void vcpu_init(struct vcpu *vcpu, struct vm *vm)
 {
 	memset_s(vcpu, sizeof(*vcpu), 0, sizeof(*vcpu));
-	sl_init(&vcpu->lock);
-	vcpu->regs_available = true;
+	sl_init(&vcpu->execution_lock);
+	sl_init(&vcpu->interrupts_lock);
 	vcpu->vm = vm;
 	vcpu->state = VCPU_STATE_OFF;
 }
 
 /**
  * Initialise the registers for the given vCPU and set the state to
- * VCPU_STATE_READY. The caller must hold the vCPU lock while calling this.
+ * VCPU_STATE_READY. The caller must hold the vCPU execution lock while calling
+ * this.
  */
-void vcpu_on(struct vcpu_locked vcpu, ipaddr_t entry, uintreg_t arg)
+void vcpu_on(struct vcpu_execution_locked vcpu, ipaddr_t entry, uintreg_t arg)
 {
 	arch_regs_set_pc_arg(&vcpu.vcpu->regs, entry, arg);
 	vcpu.vcpu->state = VCPU_STATE_READY;
@@ -77,13 +91,12 @@ spci_vcpu_index_t vcpu_index(const struct vcpu *vcpu)
  * turning vCPUs on and off. Note that aborted still counts as on in this
  * context.
  */
-bool vcpu_is_off(struct vcpu_locked vcpu)
+bool vcpu_is_off(struct vcpu_execution_locked vcpu)
 {
 	switch (vcpu.vcpu->state) {
 	case VCPU_STATE_OFF:
 		return true;
 	case VCPU_STATE_READY:
-	case VCPU_STATE_RUNNING:
 	case VCPU_STATE_BLOCKED_MAILBOX:
 	case VCPU_STATE_BLOCKED_INTERRUPT:
 	case VCPU_STATE_ABORTED:
@@ -107,14 +120,14 @@ bool vcpu_is_off(struct vcpu_locked vcpu)
 bool vcpu_secondary_reset_and_start(struct vcpu *vcpu, ipaddr_t entry,
 				    uintreg_t arg)
 {
-	struct vcpu_locked vcpu_locked;
+	struct vcpu_execution_locked vcpu_execution_locked;
 	struct vm *vm = vcpu->vm;
 	bool vcpu_was_off;
 
 	CHECK(vm->id != HF_PRIMARY_VM_ID);
 
-	vcpu_locked = vcpu_lock(vcpu);
-	vcpu_was_off = vcpu_is_off(vcpu_locked);
+	vcpu_execution_locked = vcpu_lock(vcpu);
+	vcpu_was_off = vcpu_is_off(vcpu_execution_locked);
 	if (vcpu_was_off) {
 		/*
 		 * Set vCPU registers to a clean state ready for boot. As this
@@ -123,9 +136,9 @@ bool vcpu_secondary_reset_and_start(struct vcpu *vcpu, ipaddr_t entry,
 		 * pCPU it is running on.
 		 */
 		arch_regs_reset(vcpu);
-		vcpu_on(vcpu_locked, entry, arg);
+		vcpu_on(vcpu_execution_locked, entry, arg);
 	}
-	vcpu_unlock(&vcpu_locked);
+	vcpu_unlock(&vcpu_execution_locked);
 
 	return vcpu_was_off;
 }
