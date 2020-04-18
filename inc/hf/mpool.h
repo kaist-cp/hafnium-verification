@@ -21,11 +21,15 @@
 
 #include "hf/spinlock.h"
 
-struct mpool {
-	struct spinlock lock;
+struct mpool_inner {
 	size_t entry_size;
 	struct mpool_chunk *chunk_list;
 	struct mpool_entry *entry_list;
+};
+
+struct mpool {
+	struct spinlock lock;
+	struct mpool_inner inner;
 	struct mpool *fallback;
 };
 
