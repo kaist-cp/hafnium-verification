@@ -45,6 +45,19 @@ void vcpu_unlock(struct vcpu_execution_locked *locked)
 	locked->vcpu = NULL;
 }
 
+/**
+ * Tries to lock the given vCPU, but doesn't block if it is locked.
+ **/
+bool vcpu_try_lock(struct vcpu *vcpu, struct vcpu_execution_locked *locked)
+{
+	if (!sl_try_lock(&vcpu->execution_lock)) {
+		return false;
+	}
+
+	locked->vcpu = vcpu;
+	return true;
+}
+
 void vcpu_init(struct vcpu *vcpu, struct vm *vm)
 {
 	memset_s(vcpu, sizeof(*vcpu), 0, sizeof(*vcpu));

@@ -53,14 +53,6 @@
 #define CLIENT_ID_MASK UINT64_C(0xffff)
 
 /**
- * Returns a reference to the currently executing vCPU.
- */
-static struct vcpu *current(void)
-{
-	return (struct vcpu *)read_msr(tpidr_el2);
-}
-
-/**
  * Saves the state of per-vCPU peripherals, such as the virtual timer, and
  * informs the arch-independent sections that registers have been saved.
  */

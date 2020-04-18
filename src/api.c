@@ -39,7 +39,8 @@
  * acquisition of locks held concurrently by the same physical CPU. Our current
  * ordering requirements are as follows:
  *
- * vcpu::execution_lock -> vm::lock -> vcpu::interrupts_lock -> mm_stage1_lock -> dlog sl
+ * vcpu::execution_lock -> vm::lock -> vcpu::interrupts_lock -> mm_stage1_lock
+ * -> dlog sl
  *
  * Locks of the same kind require the lock of lowest address to be locked first,
  * see `sl_lock_both()`.
@@ -275,7 +276,9 @@ spci_vcpu_count_t api_vcpu_get_count(spci_vm_id_t vm_id,
  */
 void api_regs_state_saved(struct vcpu *vcpu)
 {
-	sl_unlock(&vcpu->execution_lock);
+	if (vcpu->vm->id != HF_PRIMARY_VM_ID) {
+		sl_unlock(&vcpu->execution_lock);
+	}
 }
 
 /**
@@ -418,7 +421,7 @@ static bool api_vcpu_prepare_run(const struct vcpu *current, struct vcpu *vcpu,
 	 * until this has finished, so count this state as still running for the
 	 * purposes of this check.
 	 */
-	if (sl_try_lock(&vcpu->execution_lock)) {
+	if (!sl_try_lock(&vcpu->execution_lock)) {
 		/*
 		 * vCPU is running on another pCPU.
 		 *
@@ -427,8 +430,7 @@ static bool api_vcpu_prepare_run(const struct vcpu *current, struct vcpu *vcpu,
 		 * return the sleep duration if needed.
 		 */
 		*run_ret = spci_error(SPCI_BUSY);
-		ret = false;
-		goto out;
+		return false;
 	}
 
 	if (atomic_load_explicit(&vcpu->vm->aborting, memory_order_relaxed)) {

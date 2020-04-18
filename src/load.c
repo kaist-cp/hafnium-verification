@@ -219,7 +219,8 @@ static bool load_primary(struct mm_stage1_locked stage1_locked,
 		  vm->vcpu_count, pa_addr(primary_begin));
 
 	vcpu_execution_locked = vcpu_lock(vm_get_vcpu(vm, 0));
-	vcpu_on(vcpu_execution_locked, ipa_from_pa(primary_begin), params->kernel_arg);
+	vcpu_on(vcpu_execution_locked, ipa_from_pa(primary_begin),
+		params->kernel_arg);
 	vcpu_unlock(&vcpu_execution_locked);
 	ret = true;
 
