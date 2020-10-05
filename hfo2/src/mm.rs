@@ -562,7 +562,7 @@ impl Iterator for BlockIter {
 }
 
 /// Number of page table entries in a page table.
-pub const PTE_PER_PAGE: usize = (PAGE_SIZE / mem::size_of::<PageTableEntry>());
+pub const PTE_PER_PAGE: usize = PAGE_SIZE / mem::size_of::<PageTableEntry>();
 
 #[repr(align(4096))]
 struct RawPageTable {
