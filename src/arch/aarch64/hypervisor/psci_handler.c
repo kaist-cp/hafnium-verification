@@ -295,7 +295,6 @@ bool psci_secondary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 		uint32_t lowest_affinity_level = arg1;
 		struct vm *vm = vcpu_get_vm(vcpu);
 		struct vcpu *target_vcpu;
-		struct vcpu_execution_locked vcpu_locked;
 		spci_vcpu_index_t target_vcpu_index =
 			vcpu_id_to_index(target_affinity);
 
@@ -311,13 +310,8 @@ bool psci_secondary_vm_handler(struct vcpu *vcpu, uint32_t func, uintreg_t arg0,
 		}
 
 		target_vcpu = vm_get_vcpu(vm, target_vcpu_index);
-		if (!vcpu_try_lock(target_vcpu, &vcpu_locked)) {
-			*ret = PSCI_RETURN_ON;
-		} else {
-			*ret = vcpu_is_off(vcpu_locked) ? PSCI_RETURN_OFF
-							: PSCI_RETURN_ON;
-			vcpu_unlock(&vcpu_locked);
-		}
+		*ret = vcpu_is_off(target_vcpu) ? PSCI_RETURN_OFF
+						: PSCI_RETURN_ON;
 		break;
 	}
 

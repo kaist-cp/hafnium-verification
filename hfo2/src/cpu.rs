@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use core::mem::{self, ManuallyDrop, MaybeUninit};
+use core::mem::{self, MaybeUninit};
 use core::ops::Deref;
 use core::ptr;
 
@@ -274,20 +274,20 @@ impl VCpuInner {
         self.regs.set_pc_arg(entry, arg);
         self.state = VCpuStatus::Ready;
     }
-
-    /// Check whether self is an off state, for the purpose of turning vCPUs on
-    /// and off. Note that aborted still counts as on in this context.
-    pub fn is_off(&self) -> bool {
-        // Aborted still counts as ON for the purposes of PSCI, because according to the PSCI
-        // specification (section 5.7.1) a core is only considered to be off if it has been turned
-        // off with a CPU_OFF call or hasn't yet been turned on with a CPU_ON call.
-        self.state == VCpuStatus::Off
-    }
 }
 
 #[repr(C)]
 pub struct VCpu {
     vm: *mut Vm,
+
+    /// Whether the vCPU is on.
+    ///
+    /// Only meaningful for secondary VM. For primary, use Cpu::is_on instead.
+    ///
+    /// Aborted still counts as ON for the purposes of PSCI, because according to the PSCI
+    /// specification (section 5.7.1) a core is only considered to be off if it has been turned off
+    /// with a CPU_OFF call or hasn't yet been turned on with a CPU_ON call.
+    pub is_on: SpinLock<bool>,
 
     /// If a vCPU of secondary VMs is running, its lock is logically held by the running pCPU.
     pub inner: SpinLock<VCpuInner>,
@@ -298,6 +298,7 @@ impl VCpu {
     pub fn new(vm: *mut Vm) -> Self {
         Self {
             vm,
+            is_on: SpinLock::new(false),
             inner: SpinLock::new(VCpuInner::new()),
             interrupts: SpinLock::new(Interrupts::new()),
         }
@@ -560,18 +561,12 @@ pub unsafe extern "C" fn vcpu_is_interrupted(vcpu: *const VCpu) -> bool {
     (*vcpu).interrupts.lock().is_interrupted()
 }
 
-/// Check whether the given vcpu_inner is an off state, for the purpose of
-/// turning vCPUs on and off. Note that aborted still counts as on in this
-/// context.
+/// Check whether the given vcpu is an off state, for the purpose of turning vCPUs on and off.
 ///
-/// # Safety
-///
-/// This function is intentionally marked as unsafe because `vcpu` should actually be
-/// `VCpuExecutionLocked`.
+/// Note that aborted still counts as on in this context.
 #[no_mangle]
-pub unsafe extern "C" fn vcpu_is_off(vcpu: VCpuExecutionLocked) -> bool {
-    let vcpu = ManuallyDrop::new(vcpu);
-    vcpu.get_inner().is_off()
+pub unsafe extern "C" fn vcpu_is_off(vcpu: *const VCpu) -> bool {
+    *(*vcpu).is_on.lock() == false
 }
 
 /// Starts a vCPU of a secondary VM.
@@ -589,15 +584,17 @@ pub unsafe extern "C" fn vcpu_secondary_reset_and_start(
 
     assert!(vm.id != HF_PRIMARY_VM_ID);
 
-    let mut state = vcpu.inner.lock();
-    let vcpu_was_off = state.is_off();
+    let mut is_on = vcpu.is_on.lock();
+    let vcpu_was_off = *is_on == false;
     if vcpu_was_off {
         // Set vCPU registers to a clean state ready for boot. As this
         // is a secondary which can migrate between pCPUs, the ID of the
         // vCPU is defined as the index and does not match the ID of the
         // pCPU it is running on.
+        let mut state = vcpu.inner.lock();
         state.regs.reset(false, vm, cpu_id_t::from(vcpu.index()));
         state.on(entry, arg);
+        *is_on = true;
     }
 
     vcpu_was_off
