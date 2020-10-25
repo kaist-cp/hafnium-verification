@@ -67,7 +67,7 @@ pub const STACK_SIZE: usize = PAGE_SIZE;
 pub const INTERRUPT_REGISTER_BITS: usize = 32;
 
 #[repr(C)]
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum VCpuStatus {
     /// The vcpu is switched off.
     Off,
@@ -587,11 +587,12 @@ pub unsafe extern "C" fn vcpu_secondary_reset_and_start(
     let mut is_on = vcpu.is_on.lock();
     let vcpu_was_off = *is_on == false;
     if vcpu_was_off {
-        // Set vCPU registers to a clean state ready for boot. As this
-        // is a secondary which can migrate between pCPUs, the ID of the
-        // vCPU is defined as the index and does not match the ID of the
-        // pCPU it is running on.
+        // Set vCPU registers to a clean state ready for boot.
         let mut state = vcpu.inner.lock();
+        debug_assert_eq!(state.state, VCpuStatus::Off);
+
+        // As this is a secondary which can migrate between pCPUs, the ID of the vCPU is defined as
+        // the index and does not match the ID of the pCPU it is running on.
         state.regs.reset(false, vm, cpu_id_t::from(vcpu.index()));
         state.on(entry, arg);
         *is_on = true;
