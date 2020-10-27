@@ -92,7 +92,7 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
 
     let ppool = MPool::new();
     ppool.free_pages(Pages::from_raw(
-        PTABLE_BUF.get_mut().as_mut_ptr(),
+        PTABLE_BUF.assume_init_mut().as_mut_ptr(),
         HEAP_PAGES,
     ));
 
@@ -106,7 +106,7 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
 
     /// Note(HfO2): This variable was originally local, but now is static to prevent stack overflow.
     static mut MANIFEST: MaybeUninit<Manifest> = MaybeUninit::uninit();
-    let mut manifest = MANIFEST.get_mut();
+    let mut manifest = MANIFEST.assume_init_mut();
     let mut params: BootParams = MaybeUninit::uninit().assume_init();
 
     // TODO(HfO2): doesn't need to lock, actually
@@ -126,7 +126,7 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
 
     // Initialise HAFNIUM.
     ptr::write(
-        HYPERVISOR.get_mut(),
+        HYPERVISOR.assume_init_mut(),
         Hypervisor::new(ppool, mm, cpum, VmManager::new()),
     );
 
@@ -165,7 +165,7 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
 
     // Load all VMs.
     let primary_initrd = load_primary(
-        &mut HYPERVISOR.get_mut().vm_manager,
+        &mut HYPERVISOR.assume_init_mut().vm_manager,
         &mut hypervisor_ptable,
         &cpio,
         params.kernel_arg,
@@ -181,7 +181,7 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
     );
 
     load_secondary(
-        &mut HYPERVISOR.get_mut().vm_manager,
+        &mut HYPERVISOR.assume_init_mut().vm_manager,
         &mut hypervisor_ptable,
         &mut manifest,
         &cpio,
@@ -211,7 +211,7 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
 }
 
 pub fn hypervisor() -> &'static Hypervisor {
-    unsafe { HYPERVISOR.get_ref() }
+    unsafe { HYPERVISOR.assume_init_ref() }
 }
 
 // The entry point of CPUs when they are turned on. It is supposed to initialise

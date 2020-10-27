@@ -28,7 +28,8 @@ use crate::types::*;
 // To eliminate the risk of deadlocks, we define a partial order for the acquisition of locks held
 // concurrently by the same physical CPU. Our current ordering requirements are as follows:
 //
-// vcpu::execution_lock -> vm::lock -> vcpu::interrupts_lock -> mm_stage1_lock -> dlog sl
+// VCpu::inner lock -> VCpu::is_on lock -> Vm::inner lock -> VCpu::interrupts lock -> mm_stage1_lock
+// -> dlog sl
 //
 // Locks of the same kind require the lock of lowest address to be locked first, see
 // `sl_lock_both()`.

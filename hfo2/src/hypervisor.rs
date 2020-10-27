@@ -95,6 +95,11 @@ impl Hypervisor {
             .regs
             .set_retval(primary_ret.into_raw());
 
+        // If the current vCPU is turning off, update `is_on` too.
+        if secondary_state == VCpuStatus::Off {
+            *current.is_on.lock() = false;
+        }
+
         // Mark the current vcpu as waiting.
         current.get_inner_mut().state = secondary_state;
 
