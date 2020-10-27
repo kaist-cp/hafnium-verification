@@ -584,21 +584,20 @@ pub unsafe extern "C" fn vcpu_secondary_reset_and_start(
 
     assert!(vm.id != HF_PRIMARY_VM_ID);
 
-    let mut is_on = vcpu.is_on.lock();
-    let vcpu_was_off = *is_on == false;
-    if vcpu_was_off {
-        // Set vCPU registers to a clean state ready for boot.
-        let mut state = vcpu.inner.lock();
-        debug_assert_eq!(state.state, VCpuStatus::Off);
+    // Running vCPU holds its inner lock.
+    if let Ok(mut inner) = vcpu.inner.try_lock() {
+        if inner.state == VCpuStatus::Off {
+            // As this is a secondary which can migrate between pCPUs, the ID of the vCPU is defined
+            // as the index and does not match the ID of the pCPU it is running on.
+            inner.regs.reset(false, vm, cpu_id_t::from(vcpu.index()));
+            inner.on(entry, arg);
+            *vcpu.is_on.lock() = true;
 
-        // As this is a secondary which can migrate between pCPUs, the ID of the vCPU is defined as
-        // the index and does not match the ID of the pCPU it is running on.
-        state.regs.reset(false, vm, cpu_id_t::from(vcpu.index()));
-        state.on(entry, arg);
-        *is_on = true;
+            return true;
+        }
     }
 
-    vcpu_was_off
+    false
 }
 
 /// Handles a page fault. It does so by determining if it's a legitimate or
