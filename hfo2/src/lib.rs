@@ -22,10 +22,10 @@
 #![feature(ptr_offset_from)]
 #![feature(const_raw_ptr_to_usize_cast)]
 #![feature(ptr_wrapping_offset_from)]
-#![feature(slice_from_raw_parts)]
 #![feature(linkage)]
 #![feature(track_caller)]
 #![feature(try_blocks)]
+#![feature(unsafe_block_in_unsafe_fn)]
 
 #[macro_use]
 extern crate bitflags;
