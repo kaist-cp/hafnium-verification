@@ -91,8 +91,8 @@ pub unsafe fn find_file(cpio: &MemIter, filename: *const u8) -> Option<MemIter> 
     let mut iter = cpio.clone();
 
     while let Some(result) = parse_cpio(&mut iter) {
-        if strcmp(filename, result.name) == 0 {
-            return Some(MemIter::from_raw(result.contents, result.size));
+        if unsafe { strcmp(filename, result.name) } == 0 {
+            return Some(unsafe { MemIter::from_raw(result.contents, result.size) });
         }
     }
 

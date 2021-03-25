@@ -40,7 +40,7 @@ const_assert_eq!(HF_MAILBOX_SIZE, PAGE_SIZE);
 /// Returns to the primary vm and signals that the vcpu still has work to do so.
 #[no_mangle]
 pub unsafe extern "C" fn api_preempt(current: *const VCpu) -> *const VCpu {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     hypervisor().preempt(&mut current)
 }
 
@@ -48,14 +48,14 @@ pub unsafe extern "C" fn api_preempt(current: *const VCpu) -> *const VCpu {
 /// vm.
 #[no_mangle]
 pub unsafe extern "C" fn api_wait_for_interrupt(current: *const VCpu) -> *const VCpu {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     hypervisor().wait_for_interrupt(&mut current)
 }
 
 /// Puts the current vCPU in off mode, and returns to the primary VM.
 #[no_mangle]
 pub unsafe extern "C" fn api_vcpu_off(current: *const VCpu) -> *const VCpu {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     hypervisor().vcpu_off(&mut current)
 }
 
@@ -68,9 +68,9 @@ pub unsafe extern "C" fn api_spci_yield(
     current: *const VCpu,
     next: *mut *const VCpu,
 ) -> SpciReturn {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     if let Some(vcpu) = hypervisor().spci_yield(&mut current) {
-        *next = vcpu;
+        unsafe { *next = vcpu };
     }
 
     // SPCI_YIELD always returns SPCI_SUCCESS.
@@ -84,21 +84,21 @@ pub unsafe extern "C" fn api_wake_up(
     current: *const VCpu,
     target_vcpu: *const VCpu,
 ) -> *const VCpu {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
-    hypervisor().wake_up(&mut current, &*target_vcpu)
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
+    hypervisor().wake_up(&mut current, unsafe { &*target_vcpu })
 }
 
 /// Aborts the vCPU and triggers its VM to abort fully.
 #[no_mangle]
 pub unsafe extern "C" fn api_abort(current: *const VCpu) -> *const VCpu {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     hypervisor().abort(&mut current)
 }
 
 /// Returns the ID of the VM.
 #[no_mangle]
 pub unsafe extern "C" fn api_vm_get_id(current: *const VCpu) -> spci_vm_id_t {
-    let current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     hypervisor().vm_get_id(&current)
 }
 
@@ -115,7 +115,7 @@ pub unsafe extern "C" fn api_vcpu_get_count(
     vm_id: spci_vm_id_t,
     current: *const VCpu,
 ) -> spci_vcpu_count_t {
-    let current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     hypervisor().vcpu_get_count(vm_id, &current).unwrap_or(0)
 }
 
@@ -124,9 +124,9 @@ pub unsafe extern "C" fn api_vcpu_get_count(
 /// and can therefore be used by other pcpus.
 #[no_mangle]
 pub unsafe extern "C" fn api_regs_state_saved(current: *const VCpu) {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     if (*current).vm().id != HF_PRIMARY_VM_ID {
-        ManuallyDrop::drop(&mut current);
+        unsafe { ManuallyDrop::drop(&mut current) };
     }
 }
 
@@ -138,10 +138,10 @@ pub unsafe extern "C" fn api_vcpu_run(
     current: *const VCpu,
     next: *mut *const VCpu,
 ) -> u64 {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
 
     match hypervisor().vcpu_run(vm_id, vcpu_idx, &mut current) {
-        Ok(vcpu) => *next = vcpu.into_raw(),
+        Ok(vcpu) => unsafe { *next = vcpu.into_raw() },
         Err(ret) => return ret.into_raw(),
     }
 
@@ -166,10 +166,10 @@ pub unsafe extern "C" fn api_vm_configure(
     current: *const VCpu,
     next: *mut *const VCpu,
 ) -> i64 {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     let (ret, vcpu) = hypervisor().vm_configure(send, recv, &mut current);
 
-    *next = some_or!(vcpu, return ret);
+    unsafe { *next = some_or!(vcpu, return ret) };
     ret
 }
 
@@ -184,10 +184,10 @@ pub unsafe extern "C" fn api_spci_msg_send(
     current: *const VCpu,
     next: *mut *const VCpu,
 ) -> SpciReturn {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     let (ret, vcpu) = hypervisor().spci_msg_send(attributes, &mut current);
 
-    *next = some_or!(vcpu, return ret);
+    unsafe { *next = some_or!(vcpu, return ret) };
     ret
 }
 
@@ -201,10 +201,10 @@ pub unsafe extern "C" fn api_spci_msg_recv(
     current: *const VCpu,
     next: *mut *const VCpu,
 ) -> SpciReturn {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     let (ret, vcpu) = hypervisor().spci_msg_recv(attributes, &mut current);
 
-    *next = some_or!(vcpu, return ret);
+    unsafe { *next = some_or!(vcpu, return ret) };
     ret
 }
 
@@ -219,7 +219,7 @@ pub unsafe extern "C" fn api_spci_msg_recv(
 /// became writable.
 #[no_mangle]
 pub unsafe extern "C" fn api_mailbox_writable_get(current: *const VCpu) -> i64 {
-    let current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     let res = some_or!(hypervisor().mailbox_writable_get(&current), return -1);
 
     i64::from(res)
@@ -232,7 +232,7 @@ pub unsafe extern "C" fn api_mailbox_writable_get(current: *const VCpu) -> i64 {
 /// waiter otherwise.
 #[no_mangle]
 pub unsafe extern "C" fn api_mailbox_waiter_get(vm_id: spci_vm_id_t, current: *const VCpu) -> i64 {
-    let current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     let res = some_or!(hypervisor().mailbox_waiter_get(vm_id, &current), return -1);
 
     i64::from(res)
@@ -250,10 +250,10 @@ pub unsafe extern "C" fn api_mailbox_waiter_get(vm_id: spci_vm_id_t, current: *c
 ///    hf_mailbox_waiter_get.
 #[no_mangle]
 pub unsafe extern "C" fn api_mailbox_clear(current: *const VCpu, next: *mut *const VCpu) -> i64 {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     let (ret, vcpu) = hypervisor().mailbox_clear(&mut current);
 
-    *next = some_or!(vcpu, return ret);
+    unsafe { *next = some_or!(vcpu, return ret) };
     ret
 }
 
@@ -266,7 +266,7 @@ pub unsafe extern "C" fn api_interrupt_enable(
     enable: bool,
     current: *const VCpu,
 ) -> i64 {
-    let current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     if hypervisor()
         .interrupt_enable(intid, enable, &current)
         .is_ok()
@@ -282,7 +282,7 @@ pub unsafe extern "C" fn api_interrupt_enable(
 /// HF_INVALID_INTID if there are no pending interrupts.
 #[no_mangle]
 pub unsafe extern "C" fn api_interrupt_get(current: *const VCpu) -> intid_t {
-    let current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     hypervisor().interrupt_get(&current)
 }
 
@@ -305,11 +305,11 @@ pub unsafe extern "C" fn api_interrupt_inject(
     current: *mut VCpu,
     next: *mut *const VCpu,
 ) -> i64 {
-    let mut current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let mut current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     let (ret, vcpu) =
         hypervisor().interrupt_inject(target_vm_id, target_vcpu_idx, intid, &mut current);
 
-    *next = some_or!(vcpu, return ret);
+    unsafe { *next = some_or!(vcpu, return ret) };
     ret
 }
 
@@ -327,7 +327,7 @@ pub unsafe extern "C" fn api_share_memory(
     share: usize,
     current: *const VCpu,
 ) -> i64 {
-    let current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     // Convert the sharing request to memory management modes.
     // The input is untrusted so might not be a valid value.
     let share = ok_or!(HfShare::try_from(share), return -1);
@@ -350,7 +350,7 @@ pub extern "C" fn api_spci_version() -> i32 {
 
 #[no_mangle]
 pub unsafe extern "C" fn api_debug_log(c: c_char, current: *const VCpu) -> i64 {
-    let current = ManuallyDrop::new(VCpuExecutionLocked::from_raw(current));
+    let current = ManuallyDrop::new(unsafe { VCpuExecutionLocked::from_raw(current) });
     hypervisor().debug_log(c, &current);
     0
 }

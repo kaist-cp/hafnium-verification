@@ -97,8 +97,8 @@ impl Mailbox {
         self.recv = ptr::null_mut();
         self.send = ptr::null();
 
-        list_init(&mut self.waiter_list);
-        list_init(&mut self.ready_list);
+        unsafe { list_init(&mut self.waiter_list) };
+        unsafe { list_init(&mut self.ready_list) };
     }
 
     /// Retrieves the next waiter and removes it from the wait list if the VM's
@@ -222,17 +222,17 @@ pub struct VmInner {
 impl VmInner {
     /// Initializes VmInner.
     pub unsafe fn init(&mut self, vm: *mut Vm, ppool: &MPool) -> Result<(), ()> {
-        self.mailbox.init();
+        unsafe { self.mailbox.init() };
 
-        if !mm_vm_init(&mut self.ptable, ppool) {
+        if unsafe { !mm_vm_init(&mut self.ptable, ppool) } {
             return Err(());
         }
 
         // Initialise waiter entries.
         for i in 0..MAX_VMS {
             self.wait_entries[i].waiting_vm = vm;
-            list_init(&mut self.wait_entries[i].wait_links);
-            list_init(&mut self.wait_entries[i].ready_links);
+            unsafe { list_init(&mut self.wait_entries[i].wait_links) };
+            unsafe { list_init(&mut self.wait_entries[i].ready_links) };
         }
 
         Ok(())
@@ -595,22 +595,22 @@ impl VmManager {
 /// This assumes the index is valid, i.e. less than vm->vcpu_count.
 #[no_mangle]
 pub unsafe extern "C" fn vm_get_vcpu(vm: *const Vm, vcpu_index: spci_vcpu_index_t) -> *const VCpu {
-    let vm = &*vm;
+    let vm = unsafe { &*vm };
     assert!((vcpu_index as usize) < vm.vcpus.len());
     &vm.vcpus[vcpu_index as usize]
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vm_get_id(vm: *const Vm) -> spci_vm_id_t {
-    (*vm).id
+    unsafe { (*vm).id }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vm_get_arch(vm: *const Vm) -> *mut ArchVm {
-    &mut (*vm).inner.get_mut_unchecked().arch
+    unsafe { &mut (*vm).inner.get_mut_unchecked().arch }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vm_get_vcpu_count(vm: *const Vm) -> spci_vcpu_count_t {
-    (*vm).vcpus.len() as _
+    unsafe { (*vm).vcpus.len() as _ }
 }

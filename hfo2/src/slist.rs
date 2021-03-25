@@ -145,7 +145,7 @@ impl<T, C: IsElement<T>> List<T, C> {
     /// - the same `ListEntry` is not inserted more than once
     /// - the inserted object will be removed before the list is dropped
     pub unsafe fn push(&mut self, element: &T) {
-        self.head.push::<T, C>(element);
+        unsafe { self.head.push::<T, C>(element) };
     }
 
     pub fn pop(&mut self) -> Option<*mut T> {
@@ -167,13 +167,16 @@ impl<T, C: IsElement<T>> List<T, C> {
         let mut curr = self.head.next.get();
 
         while !curr.is_null() {
-            if let Some(result) = cond(C::element_of(&*curr)) {
-                (*prev).next.set((*curr).next.get());
-                return Some((C::element_of(&*curr) as *const _ as *mut _, result));
+            if let Some(result) = cond(unsafe { C::element_of(&*curr) }) {
+                unsafe { (*prev).next.set((*curr).next.get()) };
+                return Some((
+                    unsafe { C::element_of(&*curr) } as *const _ as *mut _,
+                    result,
+                ));
             }
 
             prev = curr;
-            curr = (*curr).next.get();
+            curr = unsafe { (*curr).next.get() };
         }
 
         None

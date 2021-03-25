@@ -398,7 +398,7 @@ pub unsafe fn cpu_get_buffer(cpu_id: cpu_id_t) -> &'static mut RawPage {
     static mut MESSAGE_BUFFER: MaybeUninit<[RawPage; MAX_CPUS]> = MaybeUninit::uninit();
     assert!(cpu_id < MAX_CPUS as _);
 
-    &mut MESSAGE_BUFFER.get_mut()[cpu_id as usize]
+    unsafe { &mut MESSAGE_BUFFER.get_mut()[cpu_id as usize] }
 }
 
 pub struct CpuManager {
@@ -470,7 +470,7 @@ impl CpuManager {
 
 #[no_mangle]
 pub unsafe extern "C" fn cpu_index(c: *const Cpu) -> usize {
-    hypervisor().cpu_manager.index_of(&*c)
+    hypervisor().cpu_manager.index_of(unsafe { &*c })
 }
 
 /// Turns CPU on and returns the previous state.
@@ -478,13 +478,13 @@ pub unsafe extern "C" fn cpu_index(c: *const Cpu) -> usize {
 pub unsafe extern "C" fn cpu_on(c: *const Cpu, entry: ipaddr_t, arg: uintreg_t) -> bool {
     hypervisor()
         .cpu_manager
-        .cpu_on(&*c, entry, arg, &hypervisor().vm_manager)
+        .cpu_on(unsafe { &*c }, entry, arg, &hypervisor().vm_manager)
 }
 
 /// Prepares the CPU for turning itself off.
 #[no_mangle]
 pub unsafe extern "C" fn cpu_off(c: *mut Cpu) {
-    *(*c).is_on.lock() = false;
+    unsafe { *(*c).is_on.lock() = false };
 }
 
 /// Searches for a CPU based on its id.
@@ -500,64 +500,66 @@ pub extern "C" fn cpu_find(id: cpu_id_t) -> *const Cpu {
 /// Locks the given vCPU and updates `locked` to hold the newly locked vCPU.
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_lock(vcpu: *const VCpu) -> VCpuExecutionLocked {
-    mem::forget((*vcpu).inner.lock());
-    VCpuExecutionLocked::from_raw(vcpu)
+    mem::forget(unsafe { (*vcpu).inner.lock() });
+    unsafe { VCpuExecutionLocked::from_raw(vcpu) }
 }
 
 /// Tries to lock the given vCPU, and updates `locked` if succeed.
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_try_lock(vcpu: *mut VCpu, locked: *mut VCpuExecutionLocked) -> bool {
-    (*vcpu)
-        .inner
-        .try_lock()
-        .map(|guard| {
-            mem::forget(guard);
-            ptr::write(locked, VCpuExecutionLocked::from_raw(vcpu));
-        })
-        .is_ok()
+    unsafe {
+        (*vcpu)
+            .inner
+            .try_lock()
+            .map(|guard| {
+                mem::forget(guard);
+                ptr::write(locked, VCpuExecutionLocked::from_raw(vcpu));
+            })
+            .is_ok()
+    }
 }
 
 /// Unlocks a vCPU previously locked with vcpu_lock, and updates `locked` to
 /// reflect the fact that the vCPU is no longer locked.
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_unlock(locked: *mut VCpuExecutionLocked) {
-    drop(ptr::read(locked));
-    (*locked).vcpu = ptr::null_mut();
+    drop(unsafe { ptr::read(locked) });
+    unsafe { (*locked).vcpu = ptr::null_mut() };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_index(vcpu: *const VCpu) -> spci_vcpu_index_t {
-    (*vcpu).index()
+    unsafe { (*vcpu).index() }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_get_regs(vcpu: *mut VCpu) -> *mut ArchRegs {
-    &mut (*vcpu).inner.get_mut_unchecked().regs
+    unsafe { &mut (*vcpu).inner.get_mut_unchecked().regs }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_get_regs_const(vcpu: *const VCpu) -> *const ArchRegs {
-    &(*vcpu).inner.get_unchecked().regs
+    unsafe { &(*vcpu).inner.get_unchecked().regs }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_get_vm(vcpu: *const VCpu) -> *const Vm {
-    (*vcpu).vm
+    unsafe { (*vcpu).vm }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_get_cpu(vcpu: *const VCpu) -> *const Cpu {
-    (*vcpu).inner.get_mut_unchecked().cpu
+    unsafe { (*vcpu).inner.get_mut_unchecked().cpu }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_get_interrupts(vcpu: *const VCpu) -> *mut Interrupts {
-    (*vcpu).interrupts.get_mut_unchecked()
+    unsafe { (*vcpu).interrupts.get_mut_unchecked() }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vcpu_is_interrupted(vcpu: *const VCpu) -> bool {
-    (*vcpu).interrupts.lock().is_interrupted()
+    unsafe { (*vcpu).interrupts.lock().is_interrupted() }
 }
 
 /// Check whether the given vcpu_inner is an off state, for the purpose of
@@ -584,8 +586,8 @@ pub unsafe extern "C" fn vcpu_secondary_reset_and_start(
     entry: ipaddr_t,
     arg: uintreg_t,
 ) -> bool {
-    let vcpu = &*vcpu;
-    let vm = &*vcpu.vm;
+    let vcpu = unsafe { &*vcpu };
+    let vm = unsafe { &*vcpu.vm };
 
     assert!(vm.id != HF_PRIMARY_VM_ID);
 
@@ -613,9 +615,9 @@ pub unsafe extern "C" fn vcpu_handle_page_fault(
     current: *const VCpu,
     f: *const VCpuFaultInfo,
 ) -> bool {
-    let current = &*current;
-    let vm = &*current.vm;
-    let f = &*f;
+    let current = unsafe { &*current };
+    let vm = unsafe { &*current.vm };
+    let f = unsafe { &*f };
     let mask = f.mode | Mode::INVALID;
     let vm_inner = vm.inner.lock();
 

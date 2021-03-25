@@ -145,7 +145,7 @@ pub const fn pa_from_ipa(ipa: ipaddr_t) -> paddr_t {
 #[inline]
 pub const unsafe fn va_from_ptr(p: *const c_void) -> vaddr_t {
     vaddr_t {
-        va: p as uintvaddr_t,
+        va: unsafe { p as uintvaddr_t },
     }
 }
 

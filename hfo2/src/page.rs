@@ -117,10 +117,7 @@ impl Pages {
             return Err(());
         }
 
-        Ok(Self::from_raw(
-            new_begin as *mut RawPage,
-            (new_end - new_begin) / PAGE_SIZE,
-        ))
+        Ok(unsafe { Self::from_raw(new_begin as *mut RawPage, (new_end - new_begin) / PAGE_SIZE) })
     }
 
     pub fn into_raw(self) -> *mut RawPage {

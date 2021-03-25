@@ -360,7 +360,7 @@ impl PageTableEntry {
     }
 
     unsafe fn as_block_unchecked(&self, level: u8) -> paddr_t {
-        arch_mm_block_from_pte(self.inner, level)
+        unsafe { arch_mm_block_from_pte(self.inner, level) }
     }
 
     fn as_table(&self, level: u8) -> Result<&RawPageTable, ()> {
@@ -562,7 +562,7 @@ impl Iterator for BlockIter {
 }
 
 /// Number of page table entries in a page table.
-pub const PTE_PER_PAGE: usize = (PAGE_SIZE / mem::size_of::<PageTableEntry>());
+pub const PTE_PER_PAGE: usize = PAGE_SIZE / mem::size_of::<PageTableEntry>();
 
 #[repr(align(4096))]
 struct RawPageTable {
@@ -738,7 +738,9 @@ impl RawPageTable {
     /// https://github.com/rust-lang/rust/issues/25725)
     unsafe fn drop(&mut self, level: u8, mpool: &MPool) {
         for pte in self.entries.iter() {
-            ptr::read(pte).drop(level, mpool);
+            unsafe {
+                ptr::read(pte).drop(level, mpool);
+            }
         }
 
         mem::forget(self);
@@ -820,7 +822,7 @@ impl<S: Stage> PageTable<S> {
     }
 
     const unsafe fn null() -> Self {
-        Self::from_raw(pa_init(0))
+        unsafe { Self::from_raw(pa_init(0)) }
     }
 
     /// Creates a new page table.
@@ -1162,7 +1164,7 @@ impl MemoryManager {
     }
 
     pub unsafe fn cpu_init(&self) {
-        arch_mm_enable(self.get_raw_ptable())
+        unsafe { arch_mm_enable(self.get_raw_ptable()) }
     }
 
     pub fn vm_unmap_hypervisor(ptable: &mut PageTable<Stage2>, mpool: &MPool) -> Result<(), ()> {
@@ -1202,16 +1204,16 @@ pub unsafe fn mm_vm_enable_invalidation() {
 
 #[no_mangle]
 pub unsafe extern "C" fn mm_vm_init(t: *mut PageTable<Stage2>, mpool: *const MPool) -> bool {
-    let mpool = &*mpool;
+    let mpool = unsafe { &*mpool };
     PageTable::new(mpool)
-        .map(|table| ptr::write(t, table))
+        .map(|table| unsafe { ptr::write(t, table) })
         .is_ok()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mm_vm_fini(t: *mut PageTable<Stage2>, mpool: *const MPool) {
-    let t = PageTable::<Stage2>::from_raw((*t).root);
-    let mpool = &*mpool;
+    let t = unsafe { PageTable::<Stage2>::from_raw((*t).root) };
+    let mpool = unsafe { &*mpool };
     t.drop(mpool);
 }
 
@@ -1224,12 +1226,12 @@ pub unsafe extern "C" fn mm_vm_identity_map(
     ipa: *mut ipaddr_t,
     mpool: *const MPool,
 ) -> bool {
-    let t = &mut *t;
-    let mpool = &*mpool;
+    let t = unsafe { &mut *t };
+    let mpool = unsafe { &*mpool };
     t.identity_map(begin, end, mode, mpool)
         .map(|_| {
             if !ipa.is_null() {
-                ptr::write(ipa, ipa_from_pa(begin));
+                unsafe { ptr::write(ipa, ipa_from_pa(begin)) };
             }
         })
         .is_ok()
@@ -1242,8 +1244,8 @@ pub unsafe extern "C" fn mm_vm_unmap(
     end: paddr_t,
     mpool: *const MPool,
 ) -> bool {
-    let t = &mut *t;
-    let mpool = &*mpool;
+    let t = unsafe { &mut *t };
+    let mpool = unsafe { &*mpool };
     t.identity_update(
         begin,
         end,
@@ -1261,8 +1263,8 @@ pub extern "C" fn mm_vm_unmap_hypervisor(t: *mut PageTable<Stage2>, mpool: *cons
 
 #[no_mangle]
 pub unsafe extern "C" fn mm_vm_defrag(t: *mut PageTable<Stage2>, mpool: *const MPool) {
-    let t = &mut *t;
-    let mpool = &*mpool;
+    let t = unsafe { &mut *t };
+    let mpool = unsafe { &*mpool };
     t.defrag(mpool);
 }
 
@@ -1273,8 +1275,8 @@ pub unsafe extern "C" fn mm_vm_get_mode(
     end: ipaddr_t,
     mode: *mut Mode,
 ) -> bool {
-    let t = &mut *t;
-    t.get_mode(begin, end).map(|m| *mode = m).is_ok()
+    let t = unsafe { &mut *t };
+    t.get_mode(begin, end).map(|m| unsafe { *mode = m }).is_ok()
 }
 
 #[no_mangle]
@@ -1292,10 +1294,10 @@ pub unsafe extern "C" fn mm_ptable_init(
     flags: u32,
     ppool: *mut MPool,
 ) -> bool {
-    let ppool = &*ppool;
+    let ppool = unsafe { &*ppool };
     assert!(Flags::from_bits_truncate(flags).contains(Flags::STAGE1));
 
-    ptr::write(t, ok_or!(PageTable::<Stage1>::new(ppool), return false));
+    unsafe { ptr::write(t, ok_or!(PageTable::<Stage1>::new(ppool), return false)) };
     true
 }
 
@@ -1307,7 +1309,7 @@ pub unsafe extern "C" fn mm_identity_map(
     mode: Mode,
     mpool: *const MPool,
 ) -> *mut usize {
-    let mpool = &*mpool;
+    let mpool = unsafe { &*mpool };
     stage1_locked
         .identity_map(begin, end, mode, mpool)
         .map(|_| pa_addr(begin) as *mut _)
@@ -1322,16 +1324,18 @@ pub unsafe extern "C" fn mm_identity_map_nolock(
     mode: Mode,
     mpool: *const MPool,
 ) -> *mut usize {
-    let mpool = &*mpool;
-    (*stage1)
-        .identity_map(begin, end, mode, mpool)
-        .map(|_| pa_addr(begin) as *mut _)
-        .unwrap_or(ptr::null_mut())
+    let mpool = unsafe { &*mpool };
+    unsafe {
+        (*stage1)
+            .identity_map(begin, end, mode, mpool)
+            .map(|_| pa_addr(begin) as *mut _)
+            .unwrap_or(ptr::null_mut())
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mm_defrag(mut stage1_locked: mm_stage1_locked, mpool: *const MPool) {
-    let mpool = &*mpool;
+    let mpool = unsafe { &*mpool };
     stage1_locked.defrag(mpool);
 }
 
@@ -1343,7 +1347,7 @@ pub extern "C" fn mm_lock_stage1() -> mm_stage1_locked {
 
 #[no_mangle]
 pub unsafe extern "C" fn mm_unlock_stage1(lock: *mut mm_stage1_locked) {
-    let locked = ptr::read(lock);
+    let locked = unsafe { ptr::read(lock) };
     let guard: SpinLockGuard<'static, _> = locked.into();
     drop(guard);
 }

@@ -78,36 +78,43 @@ static mut HYPERVISOR: MaybeUninit<Hypervisor> = MaybeUninit::uninit();
 /// Performs one-time initialisation of the hypervisor.
 #[no_mangle]
 unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
-    if &boot_cpu as *const _ != c || INITED {
+    if unsafe { &boot_cpu as *const _ != c || INITED } {
         return c;
     }
 
     // Make sure the console is initialised before calling dlog.
-    plat_console_init();
+    unsafe {
+        plat_console_init();
+    }
 
     dlog!("Initialising hafnium\n");
 
-    arch_one_time_init();
+    unsafe {
+        arch_one_time_init();
+    }
     arch_cpu_module_init();
 
     let ppool = MPool::new();
-    ppool.free_pages(Pages::from_raw(
-        PTABLE_BUF.get_mut().as_mut_ptr(),
-        HEAP_PAGES,
-    ));
+    ppool.free_pages(unsafe { Pages::from_raw(PTABLE_BUF.get_mut().as_mut_ptr(), HEAP_PAGES) });
 
     let mm = MemoryManager::new(&ppool).expect("mm_init failed");
 
-    mm.cpu_init();
+    unsafe {
+        mm.cpu_init();
+    }
 
     // Enable locks now that mm is initialised.
-    dlog_enable_lock();
-    mpool_enable_locks();
+    unsafe {
+        dlog_enable_lock();
+    }
+    unsafe {
+        mpool_enable_locks();
+    }
 
     /// Note(HfO2): This variable was originally local, but now is static to prevent stack overflow.
     static mut MANIFEST: MaybeUninit<Manifest> = MaybeUninit::uninit();
-    let mut manifest = MANIFEST.get_mut();
-    let mut params: BootParams = MaybeUninit::uninit().assume_init();
+    let mut manifest = unsafe { MANIFEST.get_mut() };
+    let mut params: BootParams = unsafe { MaybeUninit::uninit().assume_init() };
 
     // TODO(HfO2): doesn't need to lock, actually
     boot_flow_init(
@@ -120,15 +127,17 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
 
     let cpum = CpuManager::new(
         &params.cpu_ids[..params.cpu_count],
-        boot_cpu.id,
-        &callstacks,
+        unsafe { boot_cpu.id },
+        unsafe { &callstacks },
     );
 
     // Initialise HAFNIUM.
-    ptr::write(
-        HYPERVISOR.get_mut(),
-        Hypervisor::new(ppool, mm, cpum, VmManager::new()),
-    );
+    unsafe {
+        ptr::write(
+            HYPERVISOR.get_mut(),
+            Hypervisor::new(ppool, mm, cpum, VmManager::new()),
+        );
+    }
 
     for i in 0..params.mem_ranges_count {
         dlog!(
@@ -158,38 +167,44 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
         .expect("unable to map initrd in");
 
     let initrd = pa_addr(params.initrd_begin) as *mut _;
-    let cpio = MemIter::from_raw(
-        initrd,
-        pa_difference(params.initrd_begin, params.initrd_end),
-    );
+    let cpio = unsafe {
+        MemIter::from_raw(
+            initrd,
+            pa_difference(params.initrd_begin, params.initrd_end),
+        )
+    };
 
     // Load all VMs.
-    let primary_initrd = load_primary(
-        &mut HYPERVISOR.get_mut().vm_manager,
-        &mut hypervisor_ptable,
-        &cpio,
-        params.kernel_arg,
-        &hypervisor().mpool,
-    )
-    .expect("unable to load primary VM");
+    let primary_initrd = unsafe {
+        load_primary(
+            &mut HYPERVISOR.get_mut().vm_manager,
+            &mut hypervisor_ptable,
+            &cpio,
+            params.kernel_arg,
+            &hypervisor().mpool,
+        )
+        .expect("unable to load primary VM")
+    };
 
     // load_secondary will add regions assigned to the secondary VMs from
     // mem_ranges to reserved_ranges.
     let mut update: BootParamsUpdate = BootParamsUpdate::new(
-        pa_from_va(va_from_ptr(primary_initrd.get_next() as usize as *const _)),
-        pa_from_va(va_from_ptr(primary_initrd.get_limit() as usize as *const _)),
+        pa_from_va(unsafe { va_from_ptr(primary_initrd.get_next() as usize as *const _) }),
+        pa_from_va(unsafe { va_from_ptr(primary_initrd.get_limit() as usize as *const _) }),
     );
 
-    load_secondary(
-        &mut HYPERVISOR.get_mut().vm_manager,
-        &mut hypervisor_ptable,
-        &mut manifest,
-        &cpio,
-        &params,
-        &mut update,
-        &hypervisor().mpool,
-    )
-    .expect("unable to load secondary VMs");
+    unsafe {
+        load_secondary(
+            &mut HYPERVISOR.get_mut().vm_manager,
+            &mut hypervisor_ptable,
+            &mut manifest,
+            &cpio,
+            &params,
+            &mut update,
+            &hypervisor().mpool,
+        )
+        .expect("unable to load secondary VMs")
+    };
 
     // Prepare to run by updating bootparams as seen by primary VM.
     boot_params_patch_fdt(&mut hypervisor_ptable, &mut update, &hypervisor().mpool)
@@ -198,10 +213,14 @@ unsafe extern "C" fn one_time_init(c: *const Cpu) -> *const Cpu {
     hypervisor_ptable.defrag(&hypervisor().mpool);
 
     // Enable TLB invalidation for VM page table updates.
-    mm_vm_enable_invalidation();
+    unsafe {
+        mm_vm_enable_invalidation();
+    }
 
     dlog!("Hafnium initialisation completed\n");
-    INITED = true;
+    unsafe {
+        INITED = true;
+    }
 
     hypervisor().cpu_manager.get_boot_cpu()
 
@@ -219,7 +238,9 @@ pub fn hypervisor() -> &'static Hypervisor {
 #[no_mangle]
 pub unsafe extern "C" fn cpu_main(c: *const Cpu) -> *const VCpu {
     if hypervisor().cpu_manager.index_of(c) != 0 {
-        hypervisor().memory_manager.cpu_init();
+        unsafe {
+            hypervisor().memory_manager.cpu_init();
+        }
     }
 
     let primary = hypervisor().vm_manager.get_primary();
@@ -227,10 +248,10 @@ pub unsafe extern "C" fn cpu_main(c: *const Cpu) -> *const VCpu {
 
     // TODO(HfO2): vcpu needs to be borrowed exclusively, which is safe but
     // discouraged. Move this code into one_time_init().
-    let vcpu_inner = vcpu.inner.get_mut_unchecked();
+    let vcpu_inner = unsafe { vcpu.inner.get_mut_unchecked() };
     vcpu_inner.cpu = c;
     // Reset the registers to give a clean start for the primary's vCPU.
-    vcpu_inner.regs.reset(true, vcpu.vm(), (*c).id);
+    vcpu_inner.regs.reset(true, vcpu.vm(), unsafe { (*c).id });
 
     vcpu
 }

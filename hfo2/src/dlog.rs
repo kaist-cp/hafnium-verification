@@ -59,20 +59,24 @@ pub fn _print(args: fmt::Arguments) {
 /// Enables the lock protecting the serial device.
 #[no_mangle]
 pub unsafe extern "C" fn dlog_enable_lock() {
-    DLOG_LOCK_ENABLED = true;
+    unsafe {
+        DLOG_LOCK_ENABLED = true;
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn dlog_lock() {
-    if DLOG_LOCK_ENABLED {
+    if unsafe { DLOG_LOCK_ENABLED } {
         mem::forget(WRITER.lock());
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn dlog_unlock() {
-    if DLOG_LOCK_ENABLED {
-        WRITER.unlock_unchecked();
+    if unsafe { DLOG_LOCK_ENABLED } {
+        unsafe {
+            WRITER.unlock_unchecked();
+        }
     }
 }
 
@@ -88,7 +92,13 @@ pub static mut dlog_buffer: [u8; DLOG_BUFFER_SIZE] = [0; DLOG_BUFFER_SIZE];
 
 #[no_mangle]
 pub unsafe extern "C" fn dlog_putchar(c: u8) {
-    dlog_buffer[dlog_buffer_offset] = c;
-    dlog_buffer_offset = (dlog_buffer_offset + 1) % DLOG_BUFFER_SIZE;
-    plat_console_putchar(c);
+    unsafe {
+        dlog_buffer[dlog_buffer_offset] = c;
+    }
+    unsafe {
+        dlog_buffer_offset = (dlog_buffer_offset + 1) % DLOG_BUFFER_SIZE;
+    }
+    unsafe {
+        plat_console_putchar(c);
+    }
 }

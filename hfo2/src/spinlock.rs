@@ -109,7 +109,7 @@ impl<T> SpinLock<T> {
     }
 
     pub unsafe fn get_unchecked(&self) -> &T {
-        &*self.data.get()
+        unsafe { &*self.data.get() }
     }
 
     pub fn get_mut(&mut self) -> &mut T {
@@ -118,7 +118,7 @@ impl<T> SpinLock<T> {
 
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn get_mut_unchecked(&self) -> &mut T {
-        &mut *self.data.get()
+        unsafe { &mut *self.data.get() }
     }
 
     pub fn lock_both<'s>(
@@ -182,7 +182,7 @@ impl<'s, T> SpinLockGuard<'s, T> {
 
     pub unsafe fn from_raw(data: usize) -> Self {
         Self {
-            lock: &*(data as *const _),
+            lock: unsafe { &*(data as *const _) },
             _marker: PhantomData,
         }
     }
@@ -190,15 +190,15 @@ impl<'s, T> SpinLockGuard<'s, T> {
 
 #[no_mangle]
 pub unsafe extern "C" fn sl_init(l: *mut RawSpinLock) {
-    ptr::write(l, RawSpinLock::new());
+    unsafe { ptr::write(l, RawSpinLock::new()) };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sl_lock(l: *const RawSpinLock) {
-    (*l).lock();
+    unsafe { (*l).lock() };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sl_unlock(l: *const RawSpinLock) {
-    (*l).unlock();
+    unsafe { (*l).unlock() };
 }
