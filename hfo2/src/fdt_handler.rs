@@ -42,12 +42,12 @@ impl<'a> FdtNode<'a> {
 
         #[allow(clippy::cast_ptr_alignment)]
         match data.len() {
-            4 => {
+            4 => unsafe {
                 *(data as *const _ as *mut u8 as *mut u32) = u32::from_be(value as u32);
-            }
-            8 => {
+            },
+            8 => unsafe {
                 *(data as *const _ as *mut u8 as *mut u64) = u64::from_be(value);
-            }
+            },
             _ => return Err(()),
         }
 
@@ -239,7 +239,7 @@ pub unsafe fn map(
 
     let fdt = pa_addr(fdt_addr) as *mut FdtHeader;
 
-    let node = some_or!(FdtNode::new_root(&*fdt), {
+    let node = some_or!(FdtNode::new_root(unsafe { &*fdt }), {
         dlog!("FDT failed validation.\n");
         return None;
     });
@@ -248,7 +248,7 @@ pub unsafe fn map(
     if stage1_ptable
         .identity_map(
             fdt_addr,
-            pa_add(fdt_addr, (*fdt).total_size() as usize),
+            pa_add(fdt_addr, unsafe { (*fdt).total_size() as usize }),
             Mode::R,
             ppool,
         )
@@ -271,7 +271,7 @@ pub unsafe fn unmap(
 
     stage1_ptable.unmap(
         fdt_addr,
-        pa_add(fdt_addr, (*fdt).total_size() as usize),
+        pa_add(fdt_addr, unsafe { (*fdt).total_size() as usize }),
         ppool,
     )
 }
@@ -306,13 +306,13 @@ pub unsafe fn patch(
 
     let fdt = pa_addr(fdt_addr) as *mut FdtHeader;
 
-    let mut node = FdtNode::new_root(&*fdt)
+    let mut node = FdtNode::new_root(unsafe { &*fdt })
         .or_else(|| {
             dlog!("FDT failed validation.\n");
             None
         })
         .ok_or(())?;
-    let total_size = (*fdt).total_size();
+    let total_size = unsafe { (*fdt).total_size() };
 
     // Map the fdt (+ a page) in r/w mode in preparation for updating it.
     if stage1_ptable
@@ -352,53 +352,65 @@ pub unsafe fn patch(
     }
 
     // Patch FDT to point to new ramdisk.
-    if node
-        .write_number(
+    if unsafe {
+        node.write_number(
             "linux,initrd-start\0".as_ptr(),
             pa_addr(p.initrd_begin) as u64,
         )
         .is_err()
-    {
+    } {
         dlog!("Unable to write linux,initrd-start\n");
         return Err(());
     }
 
-    if node
-        .write_number("linux,initrd-end\0".as_ptr(), pa_addr(p.initrd_end) as u64)
-        .is_err()
-    {
+    if unsafe {
+        node.write_number("linux,initrd-end\0".as_ptr(), pa_addr(p.initrd_end) as u64)
+            .is_err()
+    } {
         dlog!("Unable to write linux,initrd-end\n");
         return Err(());
     }
 
     // Patch FDT to reserve hypervisor memory so the primary VM doesn't try to
     // use it.
-    (*fdt).add_mem_reservation(
-        pa_addr(layout_text_begin()) as u64,
-        pa_difference(layout_text_begin(), layout_text_end()) as u64,
-    );
-    (*fdt).add_mem_reservation(
-        pa_addr(layout_rodata_begin()) as u64,
-        pa_difference(layout_rodata_begin(), layout_rodata_end()) as u64,
-    );
-    (*fdt).add_mem_reservation(
-        pa_addr(layout_data_begin()) as u64,
-        pa_difference(layout_data_begin(), layout_data_end()) as u64,
-    );
+    unsafe {
+        (*fdt).add_mem_reservation(
+            pa_addr(layout_text_begin()) as u64,
+            pa_difference(layout_text_begin(), layout_text_end()) as u64,
+        );
+    }
+    unsafe {
+        (*fdt).add_mem_reservation(
+            pa_addr(layout_rodata_begin()) as u64,
+            pa_difference(layout_rodata_begin(), layout_rodata_end()) as u64,
+        );
+    }
+    unsafe {
+        (*fdt).add_mem_reservation(
+            pa_addr(layout_data_begin()) as u64,
+            pa_difference(layout_data_begin(), layout_data_end()) as u64,
+        );
+    }
 
     // Patch FDT to reserve memory for secondary VMs.
     for i in 0..p.reserved_ranges_count {
-        (*fdt).add_mem_reservation(
-            pa_addr(p.reserved_ranges[i].begin) as u64,
-            pa_addr(p.reserved_ranges[i].end) as u64 - pa_addr(p.reserved_ranges[i].begin) as u64,
-        );
+        unsafe {
+            (*fdt).add_mem_reservation(
+                pa_addr(p.reserved_ranges[i].begin) as u64,
+                pa_addr(p.reserved_ranges[i].end) as u64
+                    - pa_addr(p.reserved_ranges[i].begin) as u64,
+            );
+        }
     }
 
     let stage1_ptable = ScopeGuard::into_inner(stage1_ptable);
     if stage1_ptable
         .unmap(
             fdt_addr,
-            pa_add(fdt_addr, (*fdt).total_size() as usize + PAGE_SIZE),
+            pa_add(
+                fdt_addr,
+                unsafe { (*fdt).total_size() as usize } + PAGE_SIZE,
+            ),
             ppool,
         )
         .is_err()
@@ -418,10 +430,10 @@ pub unsafe extern "C" fn fdt_map(
     ppool: *const MPool,
 ) -> *const FdtHeader {
     let node = some_or!(
-        map(&mut stage1_locked, fdt_addr, &*ppool),
+        unsafe { map(&mut stage1_locked, fdt_addr, &*ppool) },
         return ptr::null()
     );
-    ptr::write(n, node.into());
+    unsafe { ptr::write(n, node.into()) };
     pa_addr(fdt_addr) as _
 }
 
@@ -431,7 +443,7 @@ pub unsafe extern "C" fn fdt_unmap(
     fdt: *const FdtHeader,
     ppool: *const MPool,
 ) -> bool {
-    unmap(&mut stage1_locked, fdt, &*ppool).is_ok()
+    unsafe { unmap(&mut stage1_locked, fdt, &*ppool).is_ok() }
 }
 
 #[no_mangle]
@@ -440,16 +452,18 @@ pub unsafe extern "C" fn fdt_find_cpus(
     cpu_ids: *mut cpu_id_t,
     cpu_count: *mut usize,
 ) {
-    let count = FdtNode::from((*root).clone())
-        .find_cpus(slice::from_raw_parts_mut(cpu_ids, MAX_CPUS))
+    let count = FdtNode::from(unsafe { (*root).clone() })
+        .find_cpus(unsafe { slice::from_raw_parts_mut(cpu_ids, MAX_CPUS) })
         .unwrap_or(0);
 
-    ptr::write(cpu_count, count);
+    unsafe {
+        ptr::write(cpu_count, count);
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn fdt_find_memory_ranges(root: *const fdt_node, p: *mut BootParams) {
-    FdtNode::from((*root).clone()).find_memory_ranges(&mut *p);
+    FdtNode::from(unsafe { (*root).clone() }).find_memory_ranges(unsafe { &mut *p });
 }
 
 #[no_mangle]
@@ -458,10 +472,10 @@ pub unsafe extern "C" fn fdt_find_initrd(
     begin: *mut paddr_t,
     end: *mut paddr_t,
 ) -> bool {
-    let node = FdtNode::from((*n).clone());
+    let node = FdtNode::from(unsafe { (*n).clone() });
     let (b, e) = some_or!(node.find_initrd(), return false);
-    ptr::write(begin, b);
-    ptr::write(end, e);
+    unsafe { ptr::write(begin, b) };
+    unsafe { ptr::write(end, e) };
     true
 }
 
@@ -472,7 +486,7 @@ pub unsafe extern "C" fn fdt_patch(
     p: *const BootParamsUpdate,
     ppool: *const MPool,
 ) -> bool {
-    patch(&mut stage1_locked, fdt_addr, &*p, &*ppool).is_ok()
+    unsafe { patch(&mut stage1_locked, fdt_addr, &*p, &*ppool).is_ok() }
 }
 
 #[cfg(test)]

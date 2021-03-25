@@ -58,8 +58,8 @@ unsafe fn copy_to_unmapped(
         return false;
     }
 
-    ptr::copy_nonoverlapping(from, pa_addr(to) as *mut _, size);
-    arch_mm_flush_dcache(pa_addr(to), size);
+    unsafe { ptr::copy_nonoverlapping(from, pa_addr(to) as *mut _, size) };
+    unsafe { arch_mm_flush_dcache(pa_addr(to), size) };
 
     hypervisor_ptable.unmap(to, to_end, ppool).unwrap();
 
@@ -74,9 +74,9 @@ pub unsafe fn load_primary(
     kernel_arg: uintreg_t,
     ppool: &MPool,
 ) -> Result<MemIter, ()> {
-    let primary_begin = layout_primary_begin();
+    let primary_begin = unsafe { layout_primary_begin() };
 
-    let it = some_or!(find_file(cpio, "vmlinuz\0".as_ptr()), {
+    let it = some_or!(unsafe { find_file(cpio, "vmlinuz\0".as_ptr()) }, {
         dlog!("Unable to find vmlinuz\n");
         return Err(());
     });
@@ -86,12 +86,12 @@ pub unsafe fn load_primary(
         pa_addr(primary_begin) as *const u8
     );
 
-    if !copy_to_unmapped(hypervisor_ptable, primary_begin, &it, ppool) {
+    if unsafe { !copy_to_unmapped(hypervisor_ptable, primary_begin, &it, ppool) } {
         dlog!("Unable to relocate kernel for primary vm.\n");
         return Err(());
     }
 
-    let initrd = some_or!(find_file(cpio, "initrd.img\0".as_ptr()), {
+    let initrd = some_or!(unsafe { find_file(cpio, "initrd.img\0".as_ptr()) }, {
         dlog!("Unable to find initrd.img\n");
         return Err(());
     });
@@ -125,7 +125,10 @@ pub unsafe fn load_primary(
         return Err(());
     }
 
-    if !mm_vm_unmap_hypervisor(&mut (*vm).inner.get_mut_unchecked().ptable, ppool) {
+    if !mm_vm_unmap_hypervisor(
+        unsafe { &mut (*vm).inner.get_mut_unchecked().ptable },
+        ppool,
+    ) {
         dlog!("Unable to unmap hypervisor from primary vm\n");
         return Err(());
     }
@@ -217,7 +220,7 @@ pub unsafe fn load_secondary(
     //  "mem_range arrays must be the same size for memcpy.");
 
     const_assert!(mem::size_of::<MemRange>() * MAX_MEM_RANGES < 500);
-    mem_ranges_available.set_len(MAX_MEM_RANGES);
+    unsafe { mem_ranges_available.set_len(MAX_MEM_RANGES) };
     mem_ranges_available.clone_from_slice(&params.mem_ranges);
     mem_ranges_available.truncate(params.mem_ranges_count);
 
@@ -238,10 +241,12 @@ pub unsafe fn load_secondary(
             str::from_utf8(as_asciz(&manifest_vm.debug_name)).unwrap(),
         );
 
-        let kernel_filename = MemIter::from_raw(
-            manifest_vm.kernel_filename.as_ptr(),
-            as_asciz(&manifest_vm.kernel_filename).len(),
-        );
+        let kernel_filename = unsafe {
+            MemIter::from_raw(
+                manifest_vm.kernel_filename.as_ptr(),
+                as_asciz(&manifest_vm.kernel_filename).len(),
+            )
+        };
 
         let kernel = some_or!(find_file_memiter(cpio, &kernel_filename), {
             dlog!(
@@ -263,7 +268,7 @@ pub unsafe fn load_secondary(
                 continue;
             });
 
-        if !copy_to_unmapped(hypervisor_ptable, secondary_mem_begin, &kernel, ppool) {
+        if unsafe { !copy_to_unmapped(hypervisor_ptable, secondary_mem_begin, &kernel, ppool) } {
             dlog!("Unable to copy kernel\n");
             continue;
         }
@@ -311,11 +316,13 @@ pub unsafe fn load_secondary(
         );
 
         let secondary_entry = ipa_from_pa(secondary_mem_begin);
-        vcpu_secondary_reset_and_start(
-            &mut vm.vcpus[0],
-            secondary_entry,
-            pa_difference(secondary_mem_begin, secondary_mem_end) as uintreg_t,
-        );
+        unsafe {
+            vcpu_secondary_reset_and_start(
+                &mut vm.vcpus[0],
+                secondary_entry,
+                pa_difference(secondary_mem_begin, secondary_mem_end) as uintreg_t,
+            )
+        };
     }
 
     // Add newly reserved areas to update params by looking at the difference

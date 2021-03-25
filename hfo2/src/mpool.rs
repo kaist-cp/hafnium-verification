@@ -60,7 +60,7 @@ impl IsElement<Chunk> for Chunk {
     }
 
     unsafe fn element_of(entry: &ListEntry) -> &Chunk {
-        &*(entry as *const _ as *const _)
+        unsafe { &*(entry as *const _ as *const _) }
     }
 }
 
@@ -70,7 +70,7 @@ impl IsElement<Entry> for Entry {
     }
 
     unsafe fn element_of(entry: &ListEntry) -> &Entry {
-        &*(entry as *const _ as *const _)
+        unsafe { &*(entry as *const _ as *const _) }
     }
 }
 
@@ -307,38 +307,42 @@ pub unsafe fn mpool_enable_locks() {}
 #[no_mangle]
 pub unsafe extern "C" fn mpool_init(p: *mut MPool, entry_size: size_t) {
     assert_eq!(PAGE_SIZE, entry_size as usize);
-    ptr::write(p, MPool::new());
+    unsafe { ptr::write(p, MPool::new()) };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mpool_init_from(p: *mut MPool, from: *mut MPool) {
-    ptr::write(p, MPool::new_from(&*from));
-    (*from).fallback = ptr::null();
+    unsafe { ptr::write(p, MPool::new_from(&*from)) };
+    unsafe { (*from).fallback = ptr::null() };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mpool_init_with_fallback(p: *mut MPool, fallback: *const MPool) {
-    ptr::write(p, MPool::new_with_fallback(fallback));
+    unsafe { ptr::write(p, MPool::new_with_fallback(fallback)) };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mpool_fini(p: *mut MPool) {
-    ptr::drop_in_place(p);
-    (*p).fallback = ptr::null();
+    unsafe { ptr::drop_in_place(p) };
+    unsafe { (*p).fallback = ptr::null() };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mpool_add_chunk(p: *mut MPool, begin: *mut c_void, size: size_t) -> bool {
-    Pages::from_raw_u8(begin as *mut u8, size)
-        .map(|pages| (*p).free_pages(pages))
-        .is_ok()
+    unsafe {
+        Pages::from_raw_u8(begin as *mut u8, size)
+            .map(|pages| (*p).free_pages(pages))
+            .is_ok()
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mpool_alloc(p: *mut MPool) -> *mut c_void {
-    (*p).alloc()
-        .map(|page| page.into_raw() as *mut c_void)
-        .unwrap_or(ptr::null_mut())
+    unsafe {
+        (*p).alloc()
+            .map(|page| page.into_raw() as *mut c_void)
+            .unwrap_or(ptr::null_mut())
+    }
 }
 
 #[no_mangle]
@@ -347,12 +351,14 @@ pub unsafe extern "C" fn mpool_alloc_contiguous(
     count: size_t,
     align: size_t,
 ) -> *mut c_void {
-    (*p).alloc_pages(count as usize, align as usize)
-        .map(|pages| pages.into_raw() as *mut c_void)
-        .unwrap_or(ptr::null_mut())
+    unsafe {
+        (*p).alloc_pages(count as usize, align as usize)
+            .map(|pages| pages.into_raw() as *mut c_void)
+            .unwrap_or(ptr::null_mut())
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mpool_free(p: *mut MPool, ptr: *mut c_void) {
-    (*p).free(Page::from_raw(ptr as *mut RawPage));
+    unsafe { (*p).free(Page::from_raw(ptr as *mut RawPage)) };
 }
