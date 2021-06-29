@@ -16,16 +16,11 @@
 
 #![no_std]
 #![feature(core_intrinsics)]
-#![feature(const_fn)]
+#![feature(const_fn_trait_bound)]
 #![feature(const_panic)]
-#![feature(maybe_uninit_ref)]
-#![feature(ptr_offset_from)]
 #![feature(const_raw_ptr_to_usize_cast)]
-#![feature(ptr_wrapping_offset_from)]
 #![feature(linkage)]
-#![feature(track_caller)]
 #![feature(try_blocks)]
-#![feature(unsafe_block_in_unsafe_fn)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 #[macro_use]

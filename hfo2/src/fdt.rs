@@ -21,12 +21,13 @@ use core::slice;
 use core::str;
 
 use crate::std::*;
+use crate::types::*;
 
 use scopeguard::guard;
 
 /// TODO(HfO2): port this function into `std.rs` (#48.)
 extern "C" {
-    fn strcmp(a: *const u8, b: *const u8) -> i64;
+    fn strcmp(a: *const u8, b: *const u8) -> c_int;
 }
 
 #[derive(Clone)]
@@ -273,7 +274,7 @@ impl<'a> FdtTokenizer<'a> {
         self.skip_properties();
 
         while pending != 0 {
-            while let Some(_) = self.next_subnode() {
+            while self.next_subnode().is_some() {
                 self.skip_properties();
                 pending += 1;
             }

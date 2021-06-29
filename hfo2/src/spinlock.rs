@@ -19,7 +19,7 @@ use core::marker::PhantomData;
 use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::ptr;
-use core::sync::atomic::{spin_loop_hint, AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 #[repr(C)]
 pub struct RawSpinLock {
@@ -39,7 +39,7 @@ impl RawSpinLock {
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
-            spin_loop_hint();
+            ::core::hint::spin_loop();
         }
     }
 

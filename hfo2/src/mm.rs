@@ -32,7 +32,6 @@ use core::ops::*;
 use core::ptr;
 use core::slice;
 use core::sync::atomic::{fence, AtomicBool, Ordering};
-use reduce::Reduce;
 
 use crate::addr::*;
 use crate::arch::*;

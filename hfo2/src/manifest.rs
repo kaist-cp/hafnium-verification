@@ -84,10 +84,10 @@ pub struct Manifest {
 }
 
 /// Generates a string with the two letters "vm" followed by an integer.
-fn generate_vm_node_name<'a>(
-    buf: &'a mut [u8; VM_NAME_BUF_SIZE],
+fn generate_vm_node_name(
+    buf: &mut [u8; VM_NAME_BUF_SIZE],
     vm_id: spci_vm_id_t,
-) -> &'a mut [u8] {
+) -> &mut [u8] {
     struct BufWrite<'a> {
         buf: &'a mut [u8; VM_NAME_BUF_SIZE],
         size: usize,
@@ -397,7 +397,7 @@ mod test {
         }
 
         fn string_property(&mut self, name: &str, value: &str) -> &mut Self {
-            write!(self.dts, "{} = \"{}\";\n", name, value).unwrap();
+            writeln!(self.dts, "{} = \"{}\";", name, value).unwrap();
             self
         }
 
@@ -409,7 +409,7 @@ mod test {
         }
 
         fn integer_property(&mut self, name: &str, value: u64) -> &mut Self {
-            write!(self.dts, "{} = <{}>;\n", name, value).unwrap();
+            writeln!(self.dts, "{} = <{}>;", name, value).unwrap();
             self
         }
     }

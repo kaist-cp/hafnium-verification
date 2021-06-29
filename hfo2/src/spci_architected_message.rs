@@ -301,7 +301,7 @@ pub fn spci_msg_check_transition(
     };
 
     let (from_mode, to_mode) = spci_msg_get_next_state(
-        &mem_transition_table,
+        mem_transition_table,
         memory_to_attributes,
         orig_from_mode,
         orig_to_mode,
@@ -328,7 +328,7 @@ pub fn spci_share_memory(
     fallback: &MPool,
 ) -> SpciReturn {
     // Disallow reflexive shares as this suggests an error in the VM.
-    if to_inner as *mut _ == from_inner as *mut _ {
+    if ptr::eq(to_inner, from_inner) {
         return SpciReturn::InvalidParameters;
     }
 

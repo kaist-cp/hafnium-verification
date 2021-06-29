@@ -309,7 +309,7 @@ impl VCpu {
 
     pub fn index(&self) -> spci_vcpu_index_t {
         let vcpus = self.vm().vcpus.as_ptr();
-        let index = (self as *const VCpu).wrapping_offset_from(vcpus);
+        let index = unsafe { (self as *const VCpu).offset_from(vcpus) };
         assert!(index < core::u16::MAX as isize);
         index as _
     }
@@ -398,7 +398,7 @@ pub unsafe fn cpu_get_buffer(cpu_id: cpu_id_t) -> &'static mut RawPage {
     static mut MESSAGE_BUFFER: MaybeUninit<[RawPage; MAX_CPUS]> = MaybeUninit::uninit();
     assert!(cpu_id < MAX_CPUS as _);
 
-    unsafe { &mut MESSAGE_BUFFER.get_mut()[cpu_id as usize] }
+    unsafe { &mut MESSAGE_BUFFER.assume_init_mut()[cpu_id as usize] }
 }
 
 pub struct CpuManager {
@@ -440,7 +440,7 @@ impl CpuManager {
     }
 
     pub fn index_of(&self, c: *const Cpu) -> usize {
-        c.wrapping_offset_from(self.cpus.as_ptr()) as _
+        unsafe { c.offset_from(self.cpus.as_ptr()) as _ }
     }
 
     pub fn cpu_on(&self, c: &Cpu, entry: ipaddr_t, arg: uintreg_t, vm_manager: &VmManager) -> bool {

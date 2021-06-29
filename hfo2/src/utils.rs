@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-use core::sync::atomic::spin_loop_hint;
-
 #[macro_export]
 macro_rules! ok_or {
     ($e:expr, $err:expr) => {{
@@ -38,7 +36,7 @@ macro_rules! some_or {
 
 pub fn spin_loop() -> ! {
     loop {
-        spin_loop_hint();
+        ::core::hint::spin_loop();
     }
 }
 

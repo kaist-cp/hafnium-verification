@@ -45,7 +45,7 @@ pub mod plat {
         unsafe { plat_get_kernel_arg() }
     }
 
-    pub fn get_initrd_range<'a>(fdt_root: &FdtNode<'a>) -> Result<(paddr_t, paddr_t), ()> {
+    pub fn get_initrd_range(fdt_root: &FdtNode<'_>) -> Result<(paddr_t, paddr_t), ()> {
         let fdt_root = fdt_root.clone().into();
         let (mut begin, mut end) = (pa_init(0), pa_init(0));
 
