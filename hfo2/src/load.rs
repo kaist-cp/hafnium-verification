@@ -214,7 +214,7 @@ pub unsafe fn load_secondary(
     update: &mut BootParamsUpdate,
     ppool: &MPool,
 ) -> Result<(), ()> {
-    let mut mem_ranges_available: ArrayVec<[MemRange; MAX_MEM_RANGES]> = ArrayVec::new();
+    let mut mem_ranges_available: ArrayVec<MemRange, MAX_MEM_RANGES> = ArrayVec::new();
     // static_assert(
     //  sizeof(mem_ranges_available) == sizeof(params->mem_ranges),
     //  "mem_range arrays must be the same size for memcpy.");

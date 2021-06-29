@@ -403,7 +403,7 @@ pub unsafe fn cpu_get_buffer(cpu_id: cpu_id_t) -> &'static mut RawPage {
 
 pub struct CpuManager {
     /// State of all supported CPUs.
-    cpus: ArrayVec<[Cpu; MAX_CPUS]>,
+    cpus: ArrayVec<Cpu, MAX_CPUS>,
 }
 
 impl CpuManager {
@@ -412,7 +412,7 @@ impl CpuManager {
         boot_cpu_id: cpu_id_t,
         stacks: &[[u8; STACK_SIZE]; MAX_CPUS],
     ) -> Self {
-        let mut cpus: ArrayVec<[Cpu; MAX_CPUS]> = ArrayVec::new();
+        let mut cpus: ArrayVec<Cpu, MAX_CPUS> = ArrayVec::new();
 
         // Initialize boot CPU.
         let boot_stack = stacks[0].as_ptr() as usize;

@@ -80,7 +80,7 @@ pub struct ManifestVm {
 /// Hafnium manifest parsed from FDT.
 #[derive(Debug)]
 pub struct Manifest {
-    pub vms: ArrayVec<[ManifestVm; MAX_VMS]>,
+    pub vms: ArrayVec<ManifestVm, MAX_VMS>,
 }
 
 /// Generates a string with the two letters "vm" followed by an integer.

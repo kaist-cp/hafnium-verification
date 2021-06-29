@@ -210,7 +210,7 @@ impl Mailbox {
 }
 
 pub struct VmInner {
-    log_buffer: ArrayVec<[c_char; LOG_BUFFER_SIZE]>,
+    log_buffer: ArrayVec<c_char, LOG_BUFFER_SIZE>,
     pub ptable: PageTable<Stage2>,
     mailbox: Mailbox,
 
@@ -481,7 +481,7 @@ pub struct Vm {
     ///   1. Mutable inner fields are contained in VCpuState.
     ///   2. VCpuState has higher lock order than one of Vm. It is nonsense to
     ///      lock VmInner to acquire VCpuState.
-    pub vcpus: ArrayVec<[VCpu; MAX_CPUS]>,
+    pub vcpus: ArrayVec<VCpu, MAX_CPUS>,
 
     /// See api.c for the partial ordering on locks.
     pub inner: SpinLock<VmInner>,
@@ -536,7 +536,7 @@ impl Vm {
 }
 
 pub struct VmManager {
-    vms: ArrayVec<[Vm; MAX_VMS]>,
+    vms: ArrayVec<Vm, MAX_VMS>,
 }
 
 impl VmManager {
