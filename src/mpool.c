@@ -58,6 +58,13 @@ static void mpool_unlock(struct mpool *p)
 	}
 }
 
+static void mpool_inner_init(struct mpool_inner *inner, size_t entry_size)
+{
+	inner->entry_size = entry_size;
+	inner->chunk_list = NULL;
+	inner->entry_list = NULL;
+}
+
 /**
  * Initialises the given memory pool with the given entry size, which must be
  * at least the size of two pointers.
@@ -67,11 +74,20 @@ static void mpool_unlock(struct mpool *p)
  */
 void mpool_init(struct mpool *p, size_t entry_size)
 {
-	p->entry_size = entry_size;
-	p->chunk_list = NULL;
-	p->entry_list = NULL;
+	mpool_inner_init(&p->inner, entry_size);
 	p->fallback = NULL;
 	sl_init(&p->lock);
+}
+
+static void mpool_inner_init_from(struct mpool_inner *inner,
+				  struct mpool_inner *from)
+{
+	mpool_inner_init(inner, from->entry_size);
+	inner->chunk_list = from->chunk_list;
+	inner->entry_list = from->entry_list;
+
+	from->chunk_list = NULL;
+	from->entry_list = NULL;
 }
 
 /**
@@ -81,17 +97,17 @@ void mpool_init(struct mpool *p, size_t entry_size)
  */
 void mpool_init_from(struct mpool *p, struct mpool *from)
 {
-	mpool_init(p, from->entry_size);
-
 	mpool_lock(from);
-	p->chunk_list = from->chunk_list;
-	p->entry_list = from->entry_list;
+	mpool_inner_init_from(&p->inner, &from->inner);
+	mpool_unlock(from);
+
 	p->fallback = from->fallback;
 
-	from->chunk_list = NULL;
-	from->entry_list = NULL;
+	/**
+	 * Note(HfO2): To prevent data race on the next line, caller must have
+	 * full ownership of `from`.
+	 */
 	from->fallback = NULL;
-	mpool_unlock(from);
 }
 
 /**
@@ -100,8 +116,36 @@ void mpool_init_from(struct mpool *p, struct mpool *from)
  */
 void mpool_init_with_fallback(struct mpool *p, struct mpool *fallback)
 {
-	mpool_init(p, fallback->entry_size);
+	mpool_init(p, fallback->inner.entry_size);
 	p->fallback = fallback;
+}
+
+static void mpool_inner_appends_to(struct mpool_inner *inner, struct mpool *to)
+{
+	struct mpool_entry *entry;
+	struct mpool_chunk *chunk;
+
+	/* Merge the freelist into the fallback. */
+	entry = inner->entry_list;
+	while (entry != NULL) {
+		void *ptr = entry;
+
+		entry = entry->next;
+		mpool_free(to, ptr);
+	}
+
+	/* Merge the chunk list into the fallback. */
+	chunk = inner->chunk_list;
+	while (chunk != NULL) {
+		void *ptr = chunk;
+		size_t size = (uintptr_t)chunk->limit - (uintptr_t)chunk;
+
+		chunk = chunk->next_chunk;
+		mpool_add_chunk(to, ptr, size);
+	}
+
+	inner->chunk_list = NULL;
+	inner->entry_list = NULL;
 }
 
 /**
@@ -110,39 +154,45 @@ void mpool_init_with_fallback(struct mpool *p, struct mpool *fallback)
  */
 void mpool_fini(struct mpool *p)
 {
-	struct mpool_entry *entry;
-	struct mpool_chunk *chunk;
-
 	if (!p->fallback) {
 		return;
 	}
 
+	/**
+	 * TODO(HfO2): don't need to lock if the mpool_fini requires
+	 * full ownership of mpool.
+	 */
 	mpool_lock(p);
-
-	/* Merge the freelist into the fallback. */
-	entry = p->entry_list;
-	while (entry != NULL) {
-		void *ptr = entry;
-
-		entry = entry->next;
-		mpool_free(p->fallback, ptr);
-	}
-
-	/* Merge the chunk list into the fallback. */
-	chunk = p->chunk_list;
-	while (chunk != NULL) {
-		void *ptr = chunk;
-		size_t size = (uintptr_t)chunk->limit - (uintptr_t)chunk;
-
-		chunk = chunk->next_chunk;
-		mpool_add_chunk(p->fallback, ptr, size);
-	}
-
-	p->chunk_list = NULL;
-	p->entry_list = NULL;
-	p->fallback = NULL;
-
+	mpool_inner_appends_to(&p->inner, p->fallback);
 	mpool_unlock(p);
+	p->fallback = NULL;
+}
+
+static bool mpool_inner_add_chunk(struct mpool_inner *inner, void *begin,
+				  size_t size)
+{
+	struct mpool_chunk *chunk;
+	uintptr_t new_begin;
+	uintptr_t new_end;
+
+	/* Round begin address up, and end address down. */
+	new_begin = ((uintptr_t)begin + inner->entry_size - 1) /
+		    inner->entry_size * inner->entry_size;
+	new_end = ((uintptr_t)begin + size) / inner->entry_size *
+		  inner->entry_size;
+
+	/* Nothing to do if there isn't enough room for an entry. */
+	if (new_begin >= new_end || new_end - new_begin < inner->entry_size) {
+		return false;
+	}
+
+	chunk = (struct mpool_chunk *)new_begin;
+	chunk->limit = (struct mpool_chunk *)new_end;
+
+	chunk->next_chunk = inner->chunk_list;
+	inner->chunk_list = chunk;
+
+	return true;
 }
 
 /**
@@ -156,72 +206,53 @@ void mpool_fini(struct mpool *p)
  */
 bool mpool_add_chunk(struct mpool *p, void *begin, size_t size)
 {
-	struct mpool_chunk *chunk;
-	uintptr_t new_begin;
-	uintptr_t new_end;
-
-	/* Round begin address up, and end address down. */
-	new_begin = ((uintptr_t)begin + p->entry_size - 1) / p->entry_size *
-		    p->entry_size;
-	new_end = ((uintptr_t)begin + size) / p->entry_size * p->entry_size;
-
-	/* Nothing to do if there isn't enough room for an entry. */
-	if (new_begin >= new_end || new_end - new_begin < p->entry_size) {
-		return false;
-	}
-
-	chunk = (struct mpool_chunk *)new_begin;
-	chunk->limit = (struct mpool_chunk *)new_end;
+	bool ret;
 
 	mpool_lock(p);
-	chunk->next_chunk = p->chunk_list;
-	p->chunk_list = chunk;
+	ret = mpool_inner_add_chunk(&p->inner, begin, size);
 	mpool_unlock(p);
 
-	return true;
+	return ret;
 }
 
 /**
- * Allocates an entry from the given memory pool, if one is available. The
- * fallback will not be used even if there is one.
+ * Allocates an entry from the given memory pool, if one is available.
  */
-static void *mpool_alloc_no_fallback(struct mpool *p)
+static void *mpool_inner_alloc(struct mpool_inner *inner)
 {
 	void *ret;
 	struct mpool_chunk *chunk;
 	struct mpool_chunk *new_chunk;
 
 	/* Fetch an entry from the free list if one is available. */
-	mpool_lock(p);
-	if (p->entry_list != NULL) {
-		struct mpool_entry *entry = p->entry_list;
+	if (inner->entry_list != NULL) {
+		struct mpool_entry *entry = inner->entry_list;
 
-		p->entry_list = entry->next;
+		inner->entry_list = entry->next;
 		ret = entry;
 		goto exit;
 	}
 
 	/* There was no free list available. Try a chunk instead. */
-	chunk = p->chunk_list;
+	chunk = inner->chunk_list;
 	if (chunk == NULL) {
 		/* The chunk list is also empty, we're out of entries. */
 		ret = NULL;
 		goto exit;
 	}
 
-	new_chunk = (struct mpool_chunk *)((uintptr_t)chunk + p->entry_size);
+	new_chunk =
+		(struct mpool_chunk *)((uintptr_t)chunk + inner->entry_size);
 	if (new_chunk >= chunk->limit) {
-		p->chunk_list = chunk->next_chunk;
+		inner->chunk_list = chunk->next_chunk;
 	} else {
 		*new_chunk = *chunk;
-		p->chunk_list = new_chunk;
+		inner->chunk_list = new_chunk;
 	}
 
 	ret = chunk;
 
 exit:
-	mpool_unlock(p);
-
 	return ret;
 }
 
@@ -232,7 +263,11 @@ exit:
 void *mpool_alloc(struct mpool *p)
 {
 	do {
-		void *ret = mpool_alloc_no_fallback(p);
+		void *ret;
+
+		mpool_lock(p);
+		ret = mpool_inner_alloc(&p->inner);
+		mpool_unlock(p);
 
 		if (ret != NULL) {
 			return ret;
@@ -244,6 +279,15 @@ void *mpool_alloc(struct mpool *p)
 	return NULL;
 }
 
+static void mpool_inner_free(struct mpool_inner *inner, void *ptr)
+{
+	struct mpool_entry *e = ptr;
+
+	/* Store the newly freed entry in the front of the free list. */
+	e->next = inner->entry_list;
+	inner->entry_list = e;
+}
+
 /**
  * Frees an entry back into the memory pool, making it available for reuse.
  *
@@ -252,12 +296,8 @@ void *mpool_alloc(struct mpool *p)
  */
 void mpool_free(struct mpool *p, void *ptr)
 {
-	struct mpool_entry *e = ptr;
-
-	/* Store the newly freed entry in the front of the free list. */
 	mpool_lock(p);
-	e->next = p->entry_list;
-	p->entry_list = e;
+	mpool_inner_free(&p->inner, ptr);
 	mpool_unlock(p);
 }
 
@@ -266,21 +306,19 @@ void mpool_free(struct mpool *p, void *ptr)
  * allocation could not be found, the fallback will not be used even if there is
  * one.
  */
-void *mpool_alloc_contiguous_no_fallback(struct mpool *p, size_t count,
-					 size_t align)
+void *mpool_inner_alloc_contiguous(struct mpool_inner *inner, size_t count,
+				   size_t align)
 {
 	struct mpool_chunk **prev;
 	void *ret = NULL;
 
-	align *= p->entry_size;
-
-	mpool_lock(p);
+	align *= inner->entry_size;
 
 	/*
 	 * Go through the chunk list in search of one with enough room for the
 	 * requested allocation
 	 */
-	prev = &p->chunk_list;
+	prev = &inner->chunk_list;
 	while (*prev != NULL) {
 		uintptr_t start;
 		struct mpool_chunk *new_chunk;
@@ -294,8 +332,8 @@ void *mpool_alloc_contiguous_no_fallback(struct mpool *p, size_t count,
 		 * requested number of entries. Then check if this chunk is big
 		 * enough to satisfy the request.
 		 */
-		new_chunk =
-			(struct mpool_chunk *)(start + (count * p->entry_size));
+		new_chunk = (struct mpool_chunk *)(start +
+						   (count * inner->entry_size));
 		if (new_chunk <= chunk->limit) {
 			/* Remove the consumed area. */
 			if (new_chunk == chunk->limit) {
@@ -309,7 +347,7 @@ void *mpool_alloc_contiguous_no_fallback(struct mpool *p, size_t count,
 			 * Add back the space consumed by the alignment
 			 * requirement, if it's big enough to fit an entry.
 			 */
-			if (start - (uintptr_t)chunk >= p->entry_size) {
+			if (start - (uintptr_t)chunk >= inner->entry_size) {
 				chunk->next_chunk = *prev;
 				*prev = chunk;
 				chunk->limit = (struct mpool_chunk *)start;
@@ -321,8 +359,6 @@ void *mpool_alloc_contiguous_no_fallback(struct mpool *p, size_t count,
 
 		prev = &chunk->next_chunk;
 	}
-
-	mpool_unlock(p);
 
 	return ret;
 }
@@ -336,13 +372,16 @@ void *mpool_alloc_contiguous_no_fallback(struct mpool *p, size_t count,
  * The alignment is specified as the number of entries, that is, if `align` is
  * 4, the alignment in bytes will be 4 * entry_size.
  *
- * The caller can enventually free the returned entries by calling
+ * The caller can eventually free the returned entries by calling
  * mpool_add_chunk.
  */
 void *mpool_alloc_contiguous(struct mpool *p, size_t count, size_t align)
 {
 	do {
-		void *ret = mpool_alloc_contiguous_no_fallback(p, count, align);
+		void *ret;
+		mpool_lock(p);
+		ret = mpool_inner_alloc_contiguous(&p->inner, count, align);
+		mpool_unlock(p);
 
 		if (ret != NULL) {
 			return ret;
